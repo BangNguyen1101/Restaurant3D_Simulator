@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nhà Hàng 3D</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #111; font-family: 'Segoe UI', system-ui, sans-serif; color: #fff; }
+  #app canvas { display: block; }
+  .panel { position: fixed; background: rgba(15, 18, 24, .72); border: 1px solid rgba(255,255,255,.12); border-radius: 10px; padding: 10px 12px; backdrop-filter: blur(4px); pointer-events: none; }
+  #top { top: 12px; left: 12px; }
+  #money { font-size: 28px; font-weight: 800; color: #ffd84d; }
+  #stats { font-size: 13px; opacity: .85; }
+  #side { top: 12px; right: 12px; width: 280px; max-height: calc(100% - 140px); overflow: hidden; font-size: 13px; }
+  #side h3 { margin: 6px 0 4px; font-size: 13px; color: #9ad0ff; text-transform: uppercase; letter-spacing: .5px; }
+  .o { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; margin-bottom: 6px; }
+  .o .bar { grid-column: 1 / -1; }
+  .tb { opacity: .7; }
+  .t { margin: 2px 0; line-height: 1.35; }
+  .empty { opacity: .5; font-style: italic; }
+  .bar { height: 6px; background: rgba(255,255,255,.18); border-radius: 3px; overflow: hidden; margin-top: 3px; min-width: 90px; }
+  .bar i { display: block; height: 100%; }
+  #cross { position: fixed; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px; border-radius: 50%; background: rgba(255,255,255,.8); box-shadow: 0 0 0 2px rgba(0,0,0,.35); }
+  #cross.on { width: 14px; height: 14px; margin: -7px; background: transparent; border: 2px solid #ffd84d; }
+  #prompt { position: fixed; left: 50%; top: calc(50% + 28px); transform: translateX(-50%); text-align: center; font-size: 15px; text-shadow: 0 1px 3px #000, 0 0 8px #000; line-height: 1.45; pointer-events: none; }
+  #prompt .flash { color: #7CFC7C; font-weight: 700; }
+  #held { bottom: 14px; right: 12px; font-size: 14px; }
+  #help { bottom: 14px; left: 12px; font-size: 12px; opacity: .85; line-height: 1.5; }
+  #toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); background: rgba(20,24,30,.85); padding: 10px 18px; border-radius: 20px; font-weight: 600; opacity: 0; transition: opacity .3s; pointer-events: none; }
+  #shop { position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%); display: none; gap: 8px; pointer-events: none; }
+  #shop .slot { width: 96px; padding: 8px 6px; background: rgba(15,18,24,.82); border: 2px solid rgba(255,255,255,.15); border-radius: 10px; text-align: center; font-size: 12px; position: relative; }
+  #shop .slot.sel { border-color: #ffd84d; background: rgba(60,50,10,.85); }
+  #shop .slot.poor .pr { color: #ff6b6b; }
+  #shop .k { position: absolute; top: 3px; left: 6px; font-size: 11px; opacity: .6; }
+  #shop .ic { font-size: 24px; }
+  #shop .pr { color: #ffd84d; font-weight: 700; }
+  #labels { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+  .wlabel { position: absolute; left: 0; top: 0; white-space: nowrap; font-size: 12px; text-align: center; background: rgba(15,18,24,.78); padding: 4px 8px; border-radius: 8px; }
+  .wlabel.bubble { background: #fff; color: #222; font-weight: 600; border-radius: 12px; }
+  .wlabel.bubble .bar { background: #ddd; }
+  .wlabel.botlabel { font-size: 11px; background: rgba(30,60,110,.8); }
+  .wlabel.floater { background: none; font-size: 18px; font-weight: 800; text-shadow: 0 1px 3px #000; }
+  #clock { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); font-size: 15px; white-space: nowrap; }
+  #clock .open { color: #6dff9a; } #clock .closing { color: #ffcc00; } #clock .closed { color: #ff6b6b; }
+  #toast { top: 62px !important; }
+  #inv h3 { margin: 8px 0 4px; font-size: 12px; color: #9ad0ff; text-transform: uppercase; }
+  #inv h3 small { text-transform: none; opacity: .7; font-weight: 400; }
+  .ist { display: inline-block; margin-right: 10px; font-size: 15px; font-weight: 700; }
+  .ist.low, .stk.low { color: #ffcc00; } .ist.out, .stk.out { color: #ff6b6b; }
+  #supply { position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%); display: none; gap: 8px; pointer-events: none; flex-wrap: wrap; justify-content: center; max-width: 520px; }
+  #supply .stitle { width: 100%; text-align: center; font-weight: 700; text-shadow: 0 1px 3px #000; }
+  #supply .slot { width: 110px; padding: 8px 6px; background: rgba(15,18,24,.85); border: 2px solid rgba(201,162,74,.5); border-radius: 10px; text-align: center; font-size: 12px; position: relative; }
+  #supply .slot.poor .pr { color: #ff6b6b; }
+  #supply .k { position: absolute; top: 3px; left: 6px; font-size: 11px; opacity: .6; }
+  #supply .ic { font-size: 24px; } #supply .pr { color: #ffd84d; font-weight: 700; } .stk { margin-top: 3px; font-weight: 700; }
+  #recipes { z-index: 50; } #summary { z-index: 40; }
+  #recipes { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(5,8,10,.6); pointer-events: none; }
+  .rbook { width: min(1100px, 94vw); max-height: 90vh; overflow: hidden; background: #f6f0e3; color: #2a2118; border-radius: 14px; padding: 18px 22px; border: 3px solid #c9a24a; box-shadow: 0 20px 60px rgba(0,0,0,.6); font-family: 'Segoe UI', system-ui, sans-serif; }
+  .rbook h2, .rname, .rprice { font-family: 'Playfair Display', 'Times New Roman', serif; }
+  .rfoot { margin-top: 10px; font-size: 12px; color: #6b5b3e; text-align: center; }
+  .rbook h2 { margin: 0 0 12px; color: #1f4a3c; } .rbook h2 small { font-size: 13px; color: #8a7a5a; font-weight: 400; margin-left: 8px; }
+  .rgrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  .rcard { background: #fffaf0; border: 1px solid #e0d2b0; border-radius: 10px; padding: 8px 12px; font-size: 12.5px; }
+  .rhead { display: flex; align-items: center; gap: 10px; border-bottom: 1px dashed #d8c79f; padding-bottom: 6px; }
+  .ricon { font-size: 30px; } .rname { font-size: 18px; font-weight: 700; color: #1f4a3c; } .rparts { font-size: 12px; color: #6b5b3e; }
+  .rprice { margin-left: auto; text-align: right; font-size: 20px; font-weight: 700; color: #9a7a2a; }
+  .rprice small { display: block; font-size: 11px; color: #6b5b3e; font-weight: 400; }
+  .rcard ol { margin: 6px 0 0; padding-left: 20px; line-height: 1.38; } .rcard li { margin-bottom: 2px; }
+  .rcard .bad { color: #b3261e; font-weight: 700; } .rcard kbd { background: #2a2118; color: #fff; border-radius: 3px; padding: 0 5px; font-size: 11px; }
+  #summary { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); display: none; background: rgba(12,16,24,.94); border: 2px solid #c9a24a; border-radius: 14px; padding: 18px 26px; min-width: 420px; pointer-events: none; }
+  #summary h2 { margin: 0 0 10px; color: #ffd84d; }
+  #summary table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  #summary td { padding: 4px 0; } #summary td:last-child { text-align: right; font-weight: 700; padding-left: 20px; }
+  #summary .tot td { border-top: 1px solid #555; padding-top: 8px; font-size: 16px; }
+  .pos { color: #6dff9a; } .neg { color: #ff6b6b; }
+  #summary .hint { margin-top: 12px; font-size: 13px; opacity: .9; line-height: 1.5; }
+  #overlay { position: fixed; inset: 0; background: rgba(8,10,14,.82); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  #overlay .box { max-width: 640px; padding: 28px 32px; background: #1b2029; border-radius: 16px; border: 1px solid #333c4a; line-height: 1.6; }
+  #overlay h1 { margin: 0 0 6px; font-size: 34px; color: #ffd84d; }
+  #overlay kbd { background: #2c3442; border: 1px solid #44506a; border-radius: 4px; padding: 0 6px; font-family: inherit; font-size: 13px; }
+  #overlay .go { margin-top: 16px; font-size: 18px; font-weight: 700; color: #7CFC7C; }
+  #overlay ul { padding-left: 20px; margin: 8px 0; }
+  #overlay .box { max-height: 94vh; overflow-y: auto; cursor: default; }
+  #menu h3 { margin: 14px 0 6px; color: #9ad0ff; font-size: 15px; }
+  #menu .db { padding: 8px 12px; border-radius: 8px; font-size: 13px; background: #2c3442; margin-top: 12px; }
+  #menu .db.ok { background: rgba(60,180,100,.18); color: #9ff0b8; } #menu .db.off { background: rgba(220,60,60,.18); color: #ffb0b0; }
+  #menu .srow { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #232a36; border-radius: 8px; margin-bottom: 6px; }
+  #menu .srow > div { flex: 1; } #menu small { opacity: .7; }
+  #overlay button { background: #c9a24a; color: #1b2029; border: 0; border-radius: 8px; padding: 8px 14px; font-weight: 700; font-family: inherit; cursor: pointer; font-size: 14px; }
+  #overlay button:hover { background: #e0b95c; } #overlay button.del { background: #5a2a2a; color: #ffb0b0; padding: 8px 10px; }
+  #overlay input { flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid #44506a; background: #141820; color: #fff; font-size: 14px; font-family: inherit; }
+  #menu .err { color: #ff8a8a; font-size: 13px; margin-top: 4px; min-height: 1em; }
+  #paused { margin-top: 14px; } #paused .go { cursor: pointer; padding: 10px; border: 1px dashed #4a8a5a; border-radius: 8px; text-align: center; }
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&subset=vietnamese&display=swap" rel="stylesheet">
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="app"></div>
+<div id="labels"></div>
+<div id="top" class="panel"><div id="money">$0</div><div id="stats"></div><div id="inv"></div></div>
+<div id="clock" class="panel"></div>
+<div id="supply"></div>
+<div id="recipes"></div>
+<div id="summary"></div>
+<div id="side" class="panel"><div id="orders"></div><div id="tasks"></div></div>
+<div id="held" class="panel">Tay không</div>
+<div id="help" class="panel">
+  <b>WASD</b> đi · <b>Shift</b> chạy · <b>E</b>/<b>Click</b> tương tác · <b>F</b> cắt<br>
+  <b>C</b> sổ công thức · <b>N</b> nhập hàng · <b>B</b> xây / thuê người · <b>R</b> xoay · <b>Esc</b> tạm dừng
+</div>
+<div id="cross"></div>
+<div id="prompt"></div>
+<div id="toast"></div>
+<div id="shop"></div>
+<div id="overlay">
+  <div class="box">
+    <h1 id="ovTitle">🍔 Le Burger d'Or</h1>
+    <ul>
+      <li>Mở cửa <b>08:00 – 18:00</b> · Bấm <kbd>Enter</kbd> để sang ngày mới</li>
+      <li>Bấm <kbd>C</kbd> mở sổ công thức</li>
+      <li>Bấm <kbd>N</kbd> để nhập thêm hàng</li>
+      <li>Bấm <kbd>B</kbd> để mua đồ, thuê nhân viên</li>
+      <li>Bấm <kbd>E</kbd> vào biển <b>MỞ RỘNG</b> để mở rộng quán</li>
+    </ul>
+    <div id="menu"><div class="db">Đang kết nối SQL Server...</div></div>
+    <div id="paused" style="display:none">
+      <button id="btnSave">💾 Lưu game - Bấm K</button>
+      <div class="go">▶ Click vào đây để chơi tiếp</div>
+    </div>
+  </div>
+</div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

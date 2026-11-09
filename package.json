@@ -1,0 +1,20 @@
+{
+  "name": "nha-hang-3d",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Game nhà hàng 3D (Three.js) lưu tiến trình vào SQL Server",
+  "main": "serve.js",
+  "scripts": {
+    "start": "node serve.js",
+    "db:init": "sqlcmd -S localhost -E -Q \"IF DB_ID('NhaHang3D') IS NULL CREATE DATABASE NhaHang3D\" && sqlcmd -S localhost -E -d NhaHang3D -i db/schema.sql"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "mssql": "^12.7.14"
+  },
+  "optionalDependencies": {
+    "msnodesqlv8": "^6.2.2"
+  }
+}
