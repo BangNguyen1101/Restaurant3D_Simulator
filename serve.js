@@ -57,7 +57,8 @@ http.createServer(async (req, res) => {
   const file = path.normalize(path.join(root, url === '/' ? 'index.html' : url));
   const rel = path.relative(root, file);
   const blocked = rel.startsWith('..') || rel.split(path.sep).some((p) => p.startsWith('.')) // .env, .git, .claude...
-    || /^(node_modules|db)(\\|\/|$)/.test(rel) || /^(package(-lock)?\.json|serve\.js)$/.test(rel);
+    || /^(node_modules|db|logs|deploy)(\\|\/|$)/.test(rel)
+    || /^(package(-lock)?\.json|serve\.js|web\.config.*|.*\.(md|ps1|zip))$/i.test(rel); // web.config chứa mật khẩu DB
   if (blocked) { res.writeHead(403); return res.end(); }
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(404); return res.end('Not found'); }

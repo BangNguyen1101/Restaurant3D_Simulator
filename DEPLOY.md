@@ -1,171 +1,79 @@
-# Hướng dẫn deploy game lên Azure (chạy 24/7, có SQL)
+# Chia sẻ game qua Cloudflare Tunnel
 
-Kết quả cuối: link dạng `https://nhahang3d-<tên-bạn>.azurewebsites.net`, mọi người chơi được kể cả khi máy bạn tắt, tiến trình lưu vào **Azure SQL Database**.
+Game và SQL Server vẫn chạy **trên máy bạn**. Cloudflare Tunnel tạo một đường link `https://....trycloudflare.com` để người khác truy cập vào máy bạn qua Internet — không cần mở port modem, không cần IP tĩnh, **không cần tài khoản**, miễn phí.
 
 ```
-Người chơi ──► Azure App Service (chạy serve.js) ──► Azure SQL Database
-                     ▲
-              GitHub (code của bạn) – mỗi lần push là tự deploy lại
+Người chơi ──https──► Cloudflare ──đường hầm mã hoá──► cloudflared (máy bạn) ──► serve.js :5173 ──► SQL Server (máy bạn)
 ```
 
-Chi phí: dùng **Azure for Students** ($100 tín dụng, không cần thẻ) + gói **miễn phí** của Azure SQL và App Service → 0đ nếu làm đúng các lựa chọn bên dưới.
+> Máy tắt / ngủ / mất mạng, hoặc bạn đóng cửa sổ tunnel → link ngừng hoạt động. Mỗi lần chạy lại, link **thay đổi**.
 
 ---
 
-## Bước 0 — Chuẩn bị
+## Bước 1 — Cài cloudflared (chỉ làm 1 lần)
 
-| Cần có | Ghi chú |
-|---|---|
-| Tài khoản GitHub | https://github.com/signup |
-| Git trên máy | https://git-scm.com/download/win (kiểm tra: `git --version`) |
-| Email trường `@epu.edu.vn` | để kích hoạt Azure for Students |
-| SSMS hoặc sqlcmd | để kiểm tra database trên cloud (máy bạn đã có sqlcmd) |
+Mở PowerShell:
 
----
-
-## Bước 1 — Kích hoạt Azure for Students
-
-1. Vào https://azure.microsoft.com/free/students → **Start free**.
-2. Đăng nhập bằng tài khoản Microsoft (nên dùng chính email trường).
-3. Xác minh email trường → nhận **$100** tín dụng.
-4. Xong sẽ vào được trang quản trị: https://portal.azure.com
-
-> Tài khoản sinh viên có thể bị giới hạn vùng (region). Nếu tạo tài nguyên báo lỗi region, thử **Southeast Asia**, **East Asia** hoặc **Korea Central**.
-
----
-
-## Bước 2 — Đưa code lên GitHub
-
-Trong thư mục dự án (`Desktop\My Project\NhaHang3D`), mở terminal:
-
-```bash
-git init
-git add .
-git commit -m "Nha Hang 3D - ban dau"
+```powershell
+winget install --id Cloudflare.cloudflared
 ```
 
-Trên GitHub: bấm **New repository** → tên `nhahang3d` → **Private** hoặc Public → **Create** (không tick thêm README). Sau đó chạy 3 lệnh GitHub hiện ra, dạng:
+Đóng PowerShell, mở lại, kiểm tra:
 
-```bash
-git remote add origin https://github.com/<tên-github>/nhahang3d.git
-git branch -M main
-git push -u origin main
+```powershell
+cloudflared --version
 ```
 
-> File `.gitignore` đã loại `node_modules`, `.env`, `.claude` — mật khẩu sẽ không bị đẩy lên GitHub.
+> Nếu không dùng được winget: tải `cloudflared-windows-amd64.msi` từ trang chính thức
+> https://github.com/cloudflare/cloudflared/releases/latest rồi cài như phần mềm bình thường.
 
----
+## Bước 2 — Chạy game + mở link công khai
 
-## Bước 3 — Tạo Azure SQL Database
+Trong thư mục dự án (`Desktop\My Project\NhaHang3D`):
 
-1. Trên portal, ô tìm kiếm gõ **SQL databases** → **+ Create**.
-2. Nếu có banner **"Want to try Azure SQL Database for free?"** → bấm **Apply offer** (gói miễn phí). ✅ Rất quan trọng để không bị trừ tiền.
-3. Tab **Basics**:
-   - **Subscription**: Azure for Students
-   - **Resource group**: **Create new** → `nhahang3d-rg`
-   - **Database name**: `NhaHang3D`
-   - **Server**: **Create new**
-     - **Server name**: `nhahang3d-<tên-bạn>` (phải duy nhất toàn cầu) → địa chỉ sẽ là `nhahang3d-<tên-bạn>.database.windows.net`
-     - **Location**: Southeast Asia
-     - **Authentication method**: **Use SQL authentication**
-     - **Server admin login**: `nhahang_admin`
-     - **Password**: đặt mật khẩu mạnh, **ghi lại** (cần ở bước 5)
-   - **Free database offer**: chọn **Auto-pause the database until next month** khi hết hạn mức miễn phí (để không phát sinh tiền).
-4. Tab **Networking**:
-   - **Connectivity method**: **Public endpoint**
-   - **Allow Azure services and resources to access this server**: **Yes** (để App Service kết nối được)
-   - **Add current client IP address**: **Yes** (để máy bạn kết nối kiểm tra được)
-5. **Review + create** → **Create**. Chờ 2–5 phút.
-
-**Kiểm tra từ máy bạn** (thay tên server / mật khẩu):
-
-```bash
-sqlcmd -S nhahang3d-<tên-bạn>.database.windows.net -d NhaHang3D -U nhahang_admin -P "<mật-khẩu>" -Q "SELECT @@VERSION"
+```powershell
+powershell -ExecutionPolicy Bypass -File start-public.ps1
 ```
 
-Không cần tự tạo bảng — server game sẽ tự chạy `db/schema.sql` lần đầu kết nối.
+Script sẽ: bật server game (kết nối SQL Server trên máy) → mở tunnel. Trong log hiện ra sẽ có khung như:
 
----
-
-## Bước 4 — Tạo App Service (nơi chạy server game)
-
-1. Portal → tìm **App Services** → **+ Create** → **Web App**.
-2. Tab **Basics**:
-   - **Resource group**: `nhahang3d-rg` (cùng nhóm với database)
-   - **Name**: `nhahang3d-<tên-bạn>` → link game: `https://nhahang3d-<tên-bạn>.azurewebsites.net`
-   - **Publish**: **Code**
-   - **Runtime stack**: **Node 22 LTS**
-   - **Operating System**: **Linux**
-   - **Region**: Southeast Asia (cùng vùng với database cho nhanh)
-   - **Pricing plan**: **Create new** → chọn **Free F1** (bấm *Explore pricing plans* nếu không thấy)
-3. Tab **Deployment**:
-   - **Continuous deployment**: **Enable**
-   - **GitHub account**: đăng nhập / cấp quyền
-   - **Organization / Repository / Branch**: `<tên-github>` / `nhahang3d` / `main`
-4. **Review + create** → **Create**.
-
-Azure sẽ tự thêm một file GitHub Actions vào repo và build + deploy. Theo dõi ở GitHub → tab **Actions** (lần đầu ~3–5 phút, phải hiện ✅ xanh).
-
-> Nếu bạn lỡ tạo App Service mà chưa bật GitHub: vào App Service → **Deployment Center** → Source: **GitHub** → chọn repo → **Save**.
-
----
-
-## Bước 5 — Khai báo kết nối database cho server
-
-App Service → **Settings** → **Environment variables** → tab **App settings** → **+ Add** từng dòng:
-
-| Name | Value |
-|---|---|
-| `DB_SERVER` | `nhahang3d-<tên-bạn>.database.windows.net` |
-| `DB_NAME` | `NhaHang3D` |
-| `DB_USER` | `nhahang_admin` |
-| `DB_PASSWORD` | mật khẩu ở bước 3 |
-
-→ **Apply** → **Confirm**. App sẽ tự khởi động lại.
-
-Server tự nhận ra có `DB_USER` → chuyển sang chế độ đăng nhập SQL (trên máy nhà không có biến này nên vẫn dùng tài khoản Windows như cũ).
-
-> Không cần đặt `PORT` — Azure tự cung cấp, `serve.js` đã đọc `process.env.PORT`.
-
----
-
-## Bước 6 — Kiểm tra
-
-1. Mở `https://nhahang3d-<tên-bạn>.azurewebsites.net/api/status` → phải thấy `{"db":true,"error":null}`.
-2. Mở trang chủ → menu phải hiện 🟢 **Đã kết nối SQL Server** → chơi mới, bấm **K** lưu.
-3. Kiểm tra dữ liệu trên cloud:
-   ```bash
-   sqlcmd -S nhahang3d-<tên-bạn>.database.windows.net -d NhaHang3D -U nhahang_admin -P "<mật-khẩu>" -Q "SELECT * FROM vw_SaveOverview"
-   ```
-   Hoặc mở SSMS → Server name như trên → Authentication: **SQL Server Authentication**.
-
----
-
-## Cập nhật game sau này
-
-Sửa code trên máy → chạy:
-```bash
-git add .
-git commit -m "Mo ta thay doi"
-git push
 ```
-GitHub Actions tự deploy lại sau vài phút.
++--------------------------------------------------------------------------------------------+
+|  Your quick Tunnel has been created! Visit it at (it may take some time to be reachable):  |
+|  https://ten-ngau-nhien-abc-xyz.trycloudflare.com                                          |
++--------------------------------------------------------------------------------------------+
+```
+
+→ Gửi link đó cho mọi người. Đợi khoảng 10–30 giây sau khi link xuất hiện thì mới vào được.
+
+**Dừng chia sẻ:** bấm `Ctrl + C` trong cửa sổ đó (tắt cả tunnel và server game).
+
+### Cách làm tay (nếu không muốn dùng script)
+Mở 2 cửa sổ PowerShell trong thư mục dự án:
+```powershell
+npm start                                        # cửa sổ 1: server game
+cloudflared tunnel --url http://localhost:5173   # cửa sổ 2: tunnel
+```
+
+## Bước 3 — Kiểm tra
+
+1. Mở `https://<link-của-bạn>/api/status` → thấy `{"db":true,...}` là game đã nối SQL Server.
+2. Thử mở link bằng **điện thoại dùng 4G** (không dùng wifi nhà) để chắc chắn người ngoài vào được.
 
 ---
 
-## Gặp lỗi?
+## Lưu ý khi demo
 
-| Hiện tượng | Cách xử lý |
-|---|---|
-| `/api/status` báo `Login failed` | Sai `DB_USER` / `DB_PASSWORD` ở bước 5 |
-| Báo `Cannot open server ... client with IP` | SQL server → **Networking** → bật *Allow Azure services…* (cho App Service) hoặc thêm IP máy bạn (cho sqlcmd/SSMS) |
-| Trang báo **Application Error** | App Service → **Log stream** để xem log; hoặc **Diagnose and solve problems** |
-| GitHub Actions báo đỏ | Mở tab Actions → bấm vào lần chạy lỗi → đọc bước bị đỏ |
-| Lần đầu vào chậm ~20–30 giây | Bình thường với gói Free F1 (server "ngủ" khi không ai dùng) và database miễn phí tự tạm dừng; tải lại trang là được |
-| Database hết hạn mức miễn phí trong tháng | Database tự tạm dừng tới đầu tháng sau (nếu bạn chọn auto-pause ở bước 3) |
+- **Không để máy ngủ:** Settings → System → Power → *Screen and sleep* → "When plugged in, put my device to sleep after" = **Never** trong lúc demo.
+- **SQL Server phải đang chạy** (nó tự chạy cùng Windows; nếu `/api/status` báo lỗi DB thì mở *Services* → khởi động `SQL Server (MSSQLSERVER)`).
+- Link miễn phí kiểu này dành cho thử nghiệm/demo: không cam kết thời gian hoạt động, giới hạn số kết nối đồng thời — thoải mái cho vài chục người chơi cùng lúc.
+- Điều khiển game cần **chuột + bàn phím** (khoá chuột kiểu FPS) — chơi trên máy tính, không chơi được trên điện thoại.
+- ⚠️ Chưa có đăng nhập người chơi: ai có link cũng thấy và xoá được ô lưu của người khác. Chỉ gửi link cho người bạn tin tưởng.
+
+## Muốn link cố định (không đổi mỗi lần chạy)?
+
+Cần: tài khoản Cloudflare (miễn phí) **và một tên miền riêng** (mua khoảng 30.000–300.000đ/năm, trỏ DNS về Cloudflare). Khi đó tạo *Named Tunnel* trong Cloudflare Zero Trust → link dạng `https://nhahang3d.ten-mien-cua-ban.com`, vẫn chạy từ máy bạn. Báo mình nếu bạn muốn làm bước này.
 
 ---
 
-## ⚠️ Trước khi chia sẻ link rộng rãi
-
-Hiện game **chưa có đăng nhập người chơi**: ai vào cũng thấy và xoá được ô lưu của người khác. Gửi cho bạn bè/thầy cô demo thì ổn, nhưng nên làm thêm hệ thống tài khoản (bảng `Users`, mật khẩu băm, mỗi người chỉ thấy ô lưu của mình) trước khi công khai rộng.
+*Ghi chú: `web.config.example` và `deploy.ps1` trong thư mục là phần chuẩn bị cho việc đưa lên hosting Windows (IIS) sau này nếu bạn tìm được host phù hợp — không cần cho cách Cloudflare Tunnel.*
