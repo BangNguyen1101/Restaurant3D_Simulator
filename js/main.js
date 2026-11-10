@@ -14,6 +14,7 @@ import { initDayNight, updateDayNight, nextDay, clockText, OPEN_H, LAST_GUEST_H,
 import { recipeBookHTML } from './recipebook.js';
 import { buildStreet, updateStreet } from './street.js';
 import { checkDb, listSaves, deleteSave, startNew, startLoad, saveGame } from './save.js';
+import { initAudio, toggleMute } from './audio.js';
 
 // ===== Renderer & scene =====
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -192,8 +193,12 @@ document.addEventListener('mousedown', (e) => {
   if (game.paused) return;
   if (e.button === 0) { if (mode === 'build') buyShop(); else if (mode === 'play') doInteract(); }
 });
+// Âm thanh chỉ được bật sau thao tác đầu tiên của người chơi (quy định của trình duyệt)
+addEventListener('pointerdown', initAudio);
 addEventListener('keydown', (e) => {
   keys[e.code] = true;
+  initAudio();
+  if (e.code === 'KeyM' && e.target.tagName !== 'INPUT') { game.toast(toggleMute() ? '🔇 Đã tắt âm thanh (M để bật lại)' : '🔊 Đã bật âm thanh'); return; }
   if (game.paused) return;
   if (e.code === 'KeyE' && mode === 'play') doInteract();
   if (e.code === 'KeyF' && target && target.kind === 'station' && chop(player, target)) flashPrompt('🔪 Bắt đầu cắt');

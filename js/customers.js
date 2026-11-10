@@ -96,6 +96,7 @@ export class Customer extends Agent {
           this.angry = true;
           game.lost++; game.daily.lost++;
           game.toast(`😡 ${this.type.label} ở bàn ${this.table.no} bỏ về vì chờ quá lâu!`);
+          game.emit('customerAngry', this);
           this.leaveSeat();
         }
         break;
