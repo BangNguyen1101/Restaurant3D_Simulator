@@ -9,6 +9,7 @@ import { buildPerson, animatePerson, randomProfile, WEALTH } from './people.js';
 
 const EAT_TIME = 7;
 let nextId = 1;
+let orderSeq = 1;
 
 export class Customer extends Agent {
   constructor() {
@@ -83,7 +84,8 @@ export class Customer extends Agent {
           const likes = this.type.likes;
           const id = likes[Math.floor(Math.random() * likes.length)];
           const recipe = RECIPES.find((r) => r.id === id);
-          this.order = { recipe, customer: this, table: this.table, seat: this.seat, active: true, claimed: false, id: this.id };
+          // seq: số thứ tự gọi món — khách gọi trước được nấu và bưng trước
+          this.order = { recipe, customer: this, table: this.table, seat: this.seat, active: true, claimed: false, id: this.id, seq: orderSeq++ };
           game.orders.push(this.order);
           game.emit('newOrder', this.order);
           this.patience = this.maxPatience;

@@ -13,7 +13,17 @@
   #money { font-size: 28px; font-weight: 800; color: #ffd84d; }
   #stats { font-size: 13px; opacity: .85; }
   #side { top: 12px; right: 12px; width: 280px; max-height: calc(100% - 140px); overflow: hidden; font-size: 13px; }
-  #side h3 { margin: 6px 0 4px; font-size: 13px; color: #9ad0ff; text-transform: uppercase; letter-spacing: .5px; }
+  #side h3, #crew h3 { margin: 6px 0 4px; font-size: 13px; color: #9ad0ff; text-transform: uppercase; letter-spacing: .5px; }
+  #leftcol { position: fixed; top: 12px; left: 12px; width: 300px; max-height: calc(100% - 90px); display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+  #leftcol .panel { position: static; }
+  #crew { font-size: 12.5px; overflow: hidden; min-height: 0; display: none; }
+  #crew .role { margin-bottom: 6px; }
+  #crew .role:last-child { margin-bottom: 0; }
+  #crew .bot { margin: 2px 0; line-height: 1.35; color: #e8e8e8; }
+  #crew .bot b { color: #ffd84d; }
+  #crew .q { margin: 1px 0 1px 8px; opacity: .85; }
+  #crew .more { margin-left: 8px; opacity: .55; font-style: italic; }
+  #crew hr { border: 0; border-top: 1px solid rgba(255,255,255,.12); margin: 6px 0; }
   .o { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; margin-bottom: 6px; }
   .o .bar { grid-column: 1 / -1; }
   .tb { opacity: .7; }
@@ -102,12 +112,15 @@
 <body>
 <div id="app"></div>
 <div id="labels"></div>
-<div id="top" class="panel"><div id="money">$0</div><div id="stats"></div><div id="inv"></div></div>
+<div id="leftcol">
+  <div id="top" class="panel"><div id="money">$0</div><div id="stats"></div><div id="inv"></div></div>
+  <div id="crew" class="panel"></div>
+</div>
 <div id="clock" class="panel"></div>
 <div id="supply"></div>
 <div id="recipes"></div>
 <div id="summary"></div>
-<div id="side" class="panel"><div id="orders"></div><div id="tasks"></div></div>
+<div id="side" class="panel"><div id="orders"></div></div>
 <div id="held" class="panel">Tay không</div>
 <div id="help" class="panel">
   <b>WASD</b> đi · <b>Shift</b> chạy · <b>E</b>/<b>Click</b> tương tác · <b>F</b> cắt<br>
@@ -127,7 +140,7 @@
       <li>Bấm <kbd>B</kbd> để mua đồ, thuê nhân viên</li>
       <li>Bấm <kbd>E</kbd> vào biển <b>MỞ RỘNG</b> để mở rộng quán</li>
     </ul>
-    <div id="menu"><div class="db">Đang kết nối SQL Server...</div></div>
+    <div id="menu"><div class="db">Đang kết nối máy chủ...</div></div>
     <div id="paused" style="display:none">
       <button id="btnSave">💾 Lưu game - Bấm K</button>
       <div class="go">▶ Click vào đây để chơi tiếp</div>

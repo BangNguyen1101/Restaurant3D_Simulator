@@ -1,7 +1,7 @@
 // HỆ THỐNG 3: Kinh tế & xây dựng theo lưới (Grid Building) + bàn ăn.
 import * as THREE from 'three';
 import { game } from './state.js';
-import { grid, idx, tileCenter, isBuildable, isWalkable, reachableFrom, SPAWN, toTile, isPartitionWall, removeWall, hasRoomForTable, EXPANSIONS } from './world.js';
+import { grid, idx, tileCenter, isBuildable, isWalkable, reachableFrom, SPAWN, toTile, isPartitionWall, removeWall, hasRoomForTable, EXPANSIONS, isDemolishable, wallMeshList, wallTileOf } from './world.js';
 import { Station } from './cooking.js';
 import { matchRecipe, attachItem } from './items.js';
 
@@ -18,9 +18,9 @@ export function tableFootprint(x, z, rot) {
 }
 
 export class Table {
-  constructor(x, z, rot = 0) {
+  constructor(x, z, rot = 0, no = null) {
     this.kind = 'table';
-    this.no = tableNo++;
+    this.no = no ?? tableNo++;
     this.x = x; this.z = z; this.rot = rot;
     this.tiles = tableFootprint(x, z, rot);
     this.group = new THREE.Group();
@@ -124,13 +124,16 @@ export const SHOP = [
   { key: 'counter', name: 'Quầy ra món',   price: 40,  icon: '🛎️' },
   { key: 'chef',    name: 'Thuê đầu bếp',  price: 250, icon: '👨‍🍳', hire: true },
   { key: 'waiter',  name: 'Thuê bồi bàn',  price: 150, icon: '🤵', hire: true },
+  { key: 'move',    name: 'Di chuyển đồ',  price: 0,   icon: '✋', tool: true },
+  { key: 'wall',    name: 'Phá tường',     price: 30,  icon: '⛏️', tool: true },
 ];
 
-export const build = { selected: 0, rot: 0, ghost: null, tile: null, valid: false };
+export const build = { selected: 0, rot: 0, ghost: null, tile: null, valid: false, target: null, moving: null };
 
 const ghostOk = new THREE.MeshBasicMaterial({ color: 0x33ff66, transparent: true, opacity: 0.45, depthWrite: false });
 const ghostBad = new THREE.MeshBasicMaterial({ color: 0xff3344, transparent: true, opacity: 0.45, depthWrite: false });
 const ghostBox = new THREE.BoxGeometry(0.96, 0.9, 0.96);
+const ghostWall = new THREE.BoxGeometry(1.04, 3.04, 1.04);
 let gridHelper;
 
 export function footprintFor(key, x, z, rot) {
@@ -166,10 +169,12 @@ export function setBuildMode(on) {
   }
   gridHelper.visible = on;
   if (!on && build.ghost) { game.scene.remove(build.ghost); build.ghost = null; }
+  if (!on) cancelMove();
   game.emit('buildChanged');
 }
 
 export function selectShop(i) {
+  if (build.moving) cancelMove();
   build.selected = i;
   game.emit('buildChanged');
   const item = SHOP[i];
@@ -185,20 +190,106 @@ export function updateBuild() {
   if (build.ghost) { game.scene.remove(build.ghost); build.ghost = null; }
   if (item.hire) return;
   raycaster.setFromCamera(new THREE.Vector2(0, 0), game.camera);
+  if (item.key === 'wall') return updateWallTool();
+  if (item.key === 'move' && !build.moving) return updatePickTool();
   const hit = new THREE.Vector3();
   if (!raycaster.ray.intersectPlane(floorPlane, hit) || hit.distanceTo(game.camera.position) > 14) { build.tile = null; return; }
   const [x, z] = toTile(hit);
-  const tiles = footprintFor(item.key, x, z, build.rot);
+  const key = build.moving ? movingKey(build.moving) : item.key;
+  const tiles = footprintFor(key, x, z, build.rot);
   build.tile = [x, z];
-  build.valid = placementValid(tiles, item.key) && game.money >= item.price;
+  build.valid = build.moving
+    ? lifted(build.moving, () => placementValid(tiles, key))
+    : placementValid(tiles, item.key) && game.money >= item.price;
+  showGhost(tiles, build.valid);
+}
+
+function showGhost(tiles, ok, geo = ghostBox, y = 0.45) {
   const g = new THREE.Group();
   for (const [tx, tz] of tiles) {
-    const b = new THREE.Mesh(ghostBox, build.valid ? ghostOk : ghostBad);
-    b.position.copy(tileCenter(tx, tz, 0.45));
+    const b = new THREE.Mesh(geo, ok ? ghostOk : ghostBad);
+    b.position.copy(tileCenter(tx, tz, y));
     g.add(b);
   }
   build.ghost = g;
   game.scene.add(g);
+}
+
+// ===== Công cụ: di chuyển bàn ghế / thiết bị =====
+const movingKey = (o) => (o.kind === 'table' ? 'table' : o.type);
+const objName = (o) => (o.kind === 'table' ? `bàn ${o.no}` : o.def.name.toLowerCase());
+// Chỉ nhấc được đồ đang không có ai dùng
+export function canMove(o) {
+  if (o.kind === 'table') return o.seats.every((s) => !s.customer && !s.plate && !s.cleaningBy);
+  return !o.item && !o.reservedBy && !o.working;
+}
+function pickTarget() {
+  const objs = [...game.tables, ...game.stations].map((o) => o.group);
+  const hit = raycaster.intersectObjects(objs, true).find((h) => h.distance < 6);
+  if (!hit) return null;
+  let o = hit.object;
+  while (o && !o.userData.interact) o = o.parent;
+  return o ? o.userData.interact : null;
+}
+function updatePickTool() {
+  const t = pickTarget();
+  build.target = t;
+  build.tile = null;
+  if (t) showGhost(t.tiles, canMove(t), ghostBox, 0.5);
+}
+// Tạm "nhấc" đồ ra khỏi lưới để kiểm tra chỗ đặt mới (cho phép đặt lại chồng lên chỗ cũ / xoay tại chỗ)
+function lifted(o, fn) {
+  const saved = o.tiles.map(([x, z]) => grid.occ[idx(x, z)]);
+  for (const [x, z] of o.tiles) grid.occ[idx(x, z)] = null;
+  const list = o.kind === 'table' ? game.tables : game.stations;
+  const i = list.indexOf(o);
+  if (i >= 0) list.splice(i, 1);
+  try { return fn(); } finally {
+    if (i >= 0) list.splice(i, 0, o);
+    o.tiles.forEach(([x, z], k) => { grid.occ[idx(x, z)] = saved[k]; });
+  }
+}
+function cancelMove() {
+  if (!build.moving) return;
+  build.moving.group.visible = true;
+  build.moving = null;
+  game.emit('buildChanged');
+}
+function removeObject(o) {
+  game.scene.remove(o.group);
+  const k = game.interactables.indexOf(o.group);
+  if (k >= 0) game.interactables.splice(k, 1);
+  for (const [x, z] of o.tiles) if (grid.occ[idx(x, z)] === o) grid.occ[idx(x, z)] = null;
+  const list = o.kind === 'table' ? game.tables : game.stations;
+  const i = list.indexOf(o);
+  if (i >= 0) list.splice(i, 1);
+  if (o.label) o.label.destroy();
+}
+function relocate(o, x, z, rot) {
+  const list = o.kind === 'table' ? game.tables : game.stations;
+  const at = list.indexOf(o);
+  removeObject(o);
+  if (o.kind === 'table') {
+    const t = new Table(x, z, rot, o.no);
+    list.splice(list.indexOf(t), 1); list.splice(at, 0, t); // giữ thứ tự để số bàn không đổi khi tải lại
+    return t;
+  }
+  if (isPartitionWall(x, z)) removeWall(x, z);
+  return new Station(o.type, x, z);
+}
+
+// ===== Công cụ: phá tường =====
+function updateWallTool() {
+  const hit = raycaster.intersectObjects(wallMeshList(), true).find((h) => h.distance < 6);
+  build.tile = null; build.valid = false;
+  if (!hit) return;
+  let m = hit.object;
+  while (m.parent && m.parent !== game.scene) m = m.parent;
+  const t = wallTileOf(m);
+  if (!t) return;
+  build.tile = t;
+  build.valid = isDemolishable(...t) && game.money >= SHOP.find((s) => s.key === 'wall').price;
+  showGhost([t], build.valid, ghostWall, 1.5);
 }
 
 export function buyShop() {
@@ -210,6 +301,8 @@ export function buyShop() {
     game.emit('hire', item.key);
     return;
   }
+  if (item.key === 'move') return useMoveTool();
+  if (item.key === 'wall') return useWallTool(item);
   if (!build.tile || !build.valid) { game.toast('Không đặt được ở đây (ô bị chiếm hoặc chặn lối đi)'); return; }
   const [x, z] = build.tile;
   game.money -= item.price;
@@ -224,6 +317,39 @@ export function buyShop() {
     const next = EXPANSIONS.find((e) => !e.unlocked);
     game.toast(next ? `Hết chỗ đặt bàn! Tích $${next.price} để mở "${next.name}"` : 'Quán đã kín chỗ!');
   }
+}
+
+function useMoveTool() {
+  if (!build.moving) {
+    const t = build.target;
+    if (!t) { game.toast('Nhìn vào bàn ghế hoặc thiết bị muốn di chuyển rồi click'); return; }
+    if (!canMove(t)) { game.toast(`Không nhấc được ${objName(t)} — đang có người dùng hoặc có đồ trên đó`); return; }
+    build.moving = t;
+    build.rot = t.rot || 0;
+    t.group.visible = false;
+    game.toast(`✋ Đã nhấc ${objName(t)} — chọn chỗ mới rồi click${t.kind === 'table' ? ', R để xoay' : ''} (bấm 7 để huỷ)`);
+    game.emit('buildChanged');
+    return;
+  }
+  const o = build.moving;
+  if (!canMove(o)) { cancelMove(); game.toast('Đồ vừa có người dùng — huỷ di chuyển'); return; }
+  if (!build.tile || !build.valid) { game.toast('Không đặt được ở đây (ô bị chiếm hoặc chặn lối đi)'); return; }
+  const [x, z] = build.tile;
+  build.moving = null;
+  relocate(o, x, z, build.rot);
+  game.toast(`Đã chuyển ${objName(o)} sang chỗ mới`);
+  game.emit('buildChanged');
+}
+
+function useWallTool(item) {
+  if (!build.tile) { game.toast('Nhìn vào bức tường muốn phá rồi click'); return; }
+  const [x, z] = build.tile;
+  if (!isDemolishable(x, z)) { game.toast('Không phá được tường này (tường bao ngoài hoặc tường khu chưa mở rộng)'); return; }
+  if (game.money < item.price) { game.toast(`Không đủ tiền! Cần $${item.price}`); return; }
+  game.money -= item.price;
+  game.daily.spent += item.price;
+  removeWall(x, z);
+  game.toast(`⛏️ Đã phá tường (-$${item.price})`);
 }
 
 // Mới đầu chỉ có 2 bàn, mỗi bàn 2 người

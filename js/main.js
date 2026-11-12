@@ -4,7 +4,7 @@ import { game } from './state.js';
 import { buildLayout, buildWorldMeshes, unlockExpansion, isWalkable, toTile, inB, EXPANSIONS } from './world.js';
 import { buildDefaultKitchen, interact, chop, describeStation } from './cooking.js';
 import { updateCustomers } from './customers.js';
-import { buildDefaultDining, interactTable, describeTable, SHOP, build, setBuildMode, selectShop, updateBuild, buyShop } from './building.js';
+import { buildDefaultDining, interactTable, describeTable, SHOP, build, setBuildMode, selectShop, updateBuild, buyShop, canMove } from './building.js';
 import { updateStaff, tasks } from './staff.js';
 import { itemName, attachItem, ING } from './items.js';
 import { updateFloaters } from './labels.js';
@@ -139,23 +139,36 @@ document.addEventListener('pointerlockchange', () => {
   game.paused = !locked;
   overlay.style.display = locked ? 'none' : 'flex';
   if (!locked && game.started) {
-    document.getElementById('ovTitle').textContent = '⏸ Tạm dừng';
-    document.getElementById('menu').style.display = 'none';
-    document.getElementById('paused').style.display = 'block';
+    showPausedPanel();
   }
 });
+// Sau khi đã vào ván: thay menu bằng màn hình tạm dừng để không bấm "Tiếp tục"/"Bắt đầu" lần nữa
+// (trước đây nếu trình duyệt từ chối khoá chuột, menu vẫn hiện và mỗi lần bấm lại dựng thêm một bộ bếp + bàn ghế chồng lên nhau).
+function showPausedPanel() {
+  document.getElementById('ovTitle').textContent = '⏸ Tạm dừng';
+  document.getElementById('menu').style.display = 'none';
+  document.getElementById('paused').style.display = 'block';
+}
 
-// ===== Menu đầu game: Chơi mới / Tiếp tục (đọc danh sách ô lưu từ SQL Server) =====
+// ===== Menu đầu game: Chơi mới / Tiếp tục (đọc danh sách ô lưu từ cơ sở dữ liệu) =====
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+let menuTries = 0;
 async function renderMenu() {
   const online = await checkDb();
+  // Máy chủ miễn phí (Render) ngủ khi không có ai chơi, lần đầu cần ~1 phút để thức dậy: tự thử lại
+  if (!online && menuTries < 15 && !game.started) {
+    menuTries++;
+    $('menu').innerHTML = `<div class="db">⏳ Đang đánh thức máy chủ… (lần ${menuTries}, có thể mất tới 1 phút)</div>`;
+    setTimeout(renderMenu, 5000);
+    return;
+  }
   let saves = [];
   if (online) { try { saves = await listSaves(); } catch { /* bỏ qua */ } }
   const menu = $('menu');
   menu.innerHTML = `
     <div class="db ${online ? 'ok' : 'off'}">${online
-      ? '🟢 Đã kết nối SQL Server — tự lưu cuối mỗi ngày, bấm K để lưu bất cứ lúc nào'
-      : '🔴 Không kết nối được SQL Server — vẫn chơi được nhưng tiến trình sẽ không được lưu'}</div>
+      ? '🟢 Đã kết nối cơ sở dữ liệu — tự lưu cuối mỗi ngày, bấm K để lưu bất cứ lúc nào'
+      : '🔴 Không kết nối được cơ sở dữ liệu — vẫn chơi được nhưng tiến trình sẽ không được lưu'}</div>
     ${saves.length ? '<h3>📂 Tiếp tục</h3>' + saves.map((s) => `
       <div class="srow"><div><b>${esc(s.SlotName)}</b><br>
         <small>Ngày ${s.Day} · $${s.Money} · ${s.Tables} bàn · ${s.Staff} nhân viên · lưu lúc ${new Date(s.UpdatedAt).toLocaleString('vi-VN')}</small></div>
@@ -166,7 +179,8 @@ async function renderMenu() {
     <div class="err" id="menuErr"></div>`;
   menu.onclick = async (e) => {
     const b = e.target.closest('button');
-    if (!b) return;
+    if (!b || b.disabled) return;
+    if (game.started) { showPausedPanel(); lockPointer(); return; }
     try {
       if (b.id === 'btnNew') {
         const name = $('slotName').value.trim();
@@ -174,11 +188,14 @@ async function renderMenu() {
         if (saves.some((s) => s.SlotName.toLowerCase() === name.toLowerCase())) { $('menuErr').textContent = 'Tên này đã có — chọn "Tiếp tục" hoặc đặt tên khác.'; return; }
         startNew(name);
       } else if (b.dataset.load) {
-        await startLoad(b.dataset.load);
+        menu.querySelectorAll('button').forEach((x) => { x.disabled = true; }); // chặn bấm 2 lần khi đang tải
+        try { await startLoad(b.dataset.load); }
+        finally { if (!game.started) menu.querySelectorAll('button').forEach((x) => { x.disabled = false; }); }
       } else if (b.dataset.del) {
-        if (confirm(`Xoá vĩnh viễn ô lưu "${b.dataset.del}" khỏi SQL Server?`)) { await deleteSave(b.dataset.del); renderMenu(); }
+        if (confirm(`Xoá vĩnh viễn ô lưu "${b.dataset.del}" khỏi cơ sở dữ liệu?`)) { await deleteSave(b.dataset.del); renderMenu(); }
         return;
       }
+      showPausedPanel();
       lockPointer();
     } catch (err) { $('menuErr').textContent = '⚠️ ' + err.message; }
   };
@@ -226,8 +243,8 @@ game.on('toast', (msg) => { $('toast').textContent = msg; $('toast').style.opaci
 function renderShop() {
   $('shop').style.display = game.buildMode ? 'flex' : 'none';
   $('shop').innerHTML = SHOP.map((s, i) =>
-    `<div class="slot ${i === build.selected ? 'sel' : ''} ${game.money < s.price ? 'poor' : ''}">
-      <div class="k">${i + 1}</div><div class="ic">${s.icon}</div><div>${s.name}</div><div class="pr">$${s.price}</div></div>`).join('');
+    `<div class="slot ${i === build.selected ? 'sel' : ''} ${s.price && game.money < s.price ? 'poor' : ''}">
+      <div class="k">${i + 1}</div><div class="ic">${s.icon}</div><div>${s.name}</div><div class="pr">${s.price ? '$' + s.price : 'Miễn phí'}</div></div>`).join('');
 }
 game.on('buildChanged', renderShop);
 
@@ -269,7 +286,13 @@ function updateHUD(dt) {
   let p = '';
   if (mode === 'build') {
     const s = SHOP[build.selected];
-    p = s.hire ? `Bấm ${build.selected + 1} để thuê (lương $${WAGE[s.key]}/ngày)` : `<b>CHẾ ĐỘ XÂY</b> — Click để đặt ${s.name} ($${s.price})${s.key === 'table' ? ' · R: xoay' : ''}`;
+    if (s.hire) p = `Bấm ${build.selected + 1} để thuê (lương $${WAGE[s.key]}/ngày)`;
+    else if (s.key === 'move') {
+      const o = build.moving;
+      p = o ? `<b>DI CHUYỂN</b> — Click để đặt ${o.kind === 'table' ? `bàn ${o.no} · R: xoay` : o.def.name} · 7: huỷ`
+        : `<b>DI CHUYỂN</b> — Nhìn vào bàn ghế / thiết bị rồi click để nhấc lên${build.target ? `<br>${build.target.kind === 'table' ? `Bàn ${build.target.no}` : build.target.def.name}${canMove(build.target) ? '' : ' <span style="color:#ff6b6b">(đang được dùng)</span>'}` : ''}`;
+    } else if (s.key === 'wall') p = `<b>PHÁ TƯỜNG</b> ($${s.price}/ô) — Nhìn vào tường bên trong quán rồi click`;
+    else p = `<b>CHẾ ĐỘ XÂY</b> — Click để đặt ${s.name} ($${s.price})${s.key === 'table' ? ' · R: xoay' : ''}`;
   } else if (target) {
     if (target.kind === 'station') p = describeStation(target, player.held);
     else if (target.kind === 'table') p = describeTable(target, player.held);
@@ -298,9 +321,28 @@ function updateHUD(dt) {
     return `<div class="o"><span>${vip}${o.recipe.icon} ${o.recipe.name}</span><span class="tb">Bàn ${o.table.no}</span>
       <div class="bar"><i style="width:${k * 100}%;background:${col}"></i></div></div>`;
   }).join('') : '<div class="empty">Chưa có đơn</div>');
-  $('tasks').innerHTML = '<h3>🗂️ Task Queue</h3>' +
-    (tasks.list.length ? tasks.list.slice(0, 8).map((t) => `<div class="t">${t.role === 'chef' ? '👨‍🍳' : '🤵'} ${t.text}</div>`).join('') : '<div class="empty">Trống</div>') +
-    (game.bots.length ? '<h3>👥 Nhân viên</h3>' + game.bots.map((b) => `<div class="t"><b>${b.name}:</b> ${b.status}</div>`).join('') : '');
+  renderCrew();
+}
+
+// Bảng nhân viên (bên trái, dưới tiền & kho): tách riêng đầu bếp và bồi bàn,
+// mỗi nhóm gồm trạng thái từng người + hàng đợi việc theo thứ tự ưu tiên.
+function renderCrew() {
+  const el = $('crew');
+  if (!game.bots.length) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  const MAXQ = 5;
+  const role = (key, icon, title) => {
+    const bots = game.bots.filter((b) => b.role === key);
+    const q = tasks.pending(key);
+    if (!bots.length && !q.length) return '';
+    return `<div class="role"><h3>${icon} ${title} (${bots.length})</h3>` +
+      bots.map((b) => `<div class="bot"><b>${b.name.replace(/^\D+/, '#')}</b> ${b.status}</div>`).join('') +
+      (q.length ? `<div class="q" style="margin-top:4px;opacity:.6">Việc đang chờ (${q.length}):</div>` +
+        q.slice(0, MAXQ).map((t, i) => `<div class="q">${i + 1}. ${t.text}</div>`).join('') +
+        (q.length > MAXQ ? `<div class="more">… và ${q.length - MAXQ} việc khác</div>` : '')
+        : '<div class="q empty">Không có việc chờ</div>') + '</div>';
+  };
+  el.innerHTML = role('chef', '👨‍🍳', 'Đầu bếp') + '<hr>' + role('waiter', '🤵', 'Bồi bàn');
 }
 
 // ===== Vòng lặp =====

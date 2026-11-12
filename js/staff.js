@@ -15,23 +15,48 @@ let taskId = 1;
 export const tasks = {
   list: [],
   push(t) { t.id = taskId++; this.list.push(t); },
-  // Lấy task đầu tiên hợp lệ cho vai trò này. Task hết hiệu lực (người chơi đã tự làm) bị bỏ.
+  // Lấy task hợp lệ, sẵn sàng và ƯU TIÊN NHẤT cho vai trò này (khách gọi món trước → làm trước).
+  // Task hết hiệu lực (người chơi đã tự làm, khách đã bỏ về) bị bỏ.
   take(role) {
+    let best = null, bestKey = Infinity;
     for (let i = 0; i < this.list.length; i++) {
       const t = this.list[i];
       if (t.role !== role) continue;
       if (!t.valid()) { this.list.splice(i--, 1); continue; }
       if (t.ready && !t.ready()) continue;
-      this.list.splice(i, 1);
-      return t;
+      const k = priority(t);
+      if (k < bestKey) { best = t; bestKey = k; }
     }
-    return null;
+    if (best) this.list.splice(this.list.indexOf(best), 1);
+    return best;
   },
   prune() { this.list = this.list.filter((t) => t.valid()); },
+  // Danh sách việc còn hiệu lực của một vai trò, theo đúng thứ tự nhân viên sẽ nhận
+  pending(role) {
+    return this.list.filter((t) => t.role === role && t.valid())
+      .map((t) => ({ t, k: (t.ready && !t.ready() ? 2e9 : 0) + priority(t) }))
+      .sort((a, b) => a.k - b.k).map((x) => x.t);
+  },
 };
 
-const findWaitingCustomer = (recipe) =>
-  game.customers.find((c) => c.state === 'WAITING' && c.order.recipe.id === recipe.id && !c.targetedBy);
+// Khách đang chờ món này, ai gọi trước thì được phục vụ trước
+const findWaitingCustomer = (recipe) => {
+  let best = null;
+  for (const c of game.customers) {
+    if (c.state !== 'WAITING' || c.targetedBy || c.order.recipe.id !== recipe.id) continue;
+    if (!best || c.order.seq < best.order.seq) best = c;
+  }
+  return best;
+};
+
+// Khoá ưu tiên (nhỏ = làm trước): nấu theo thứ tự gọi món; bưng món theo thứ tự gọi của khách
+// sẽ nhận đĩa đó; dọn bàn xếp sau mọi việc bưng món (nhưng vẫn làm khi rảnh).
+const CLEAN_BASE = 1e9;
+function priority(t) {
+  if (t.type === 'cook') return t.order.seq;
+  if (t.type === 'deliver') { const c = findWaitingCustomer(matchRecipe(t.plate.contents)); return c ? c.order.seq : CLEAN_BASE - 1; }
+  return CLEAN_BASE + t.id;
+}
 
 // Sự kiện từ các hệ thống khác -> tạo task
 game.on('newOrder', (order) => tasks.push({

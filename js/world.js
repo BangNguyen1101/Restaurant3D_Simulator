@@ -49,11 +49,25 @@ EXPANSIONS.forEach((e) => { e.kind = 'expansion'; e.unlocked = false; });
 
 // Vách ngăn bếp (z=5): quầy ra món được phép đặt thay vào tường
 export const isPartitionWall = (x, z) => z === 5 && x >= 1 && x <= 15 && inB(x, z) && grid.base[idx(x, z)] === T.WALL;
+// Các ô tường trong nhà đã bị phá (lưu vào ô lưu để dựng lại đúng khi tải game)
+export const removedWalls = new Set();
 export function removeWall(x, z) {
   grid.base[idx(x, z)] = T.FLOOR;
+  removedWalls.add(idx(x, z));
   const m = wallMeshes.get(idx(x, z));
   if (m) { game.scene.remove(m); wallMeshes.delete(idx(x, z)); }
+  game.emit('wallRemoved', x, z);
 }
+
+// Tường được phép phá: tường bên trong quán (vách bếp, tường đông của bếp, tường khu đã mở rộng).
+// Không phá tường bao ngoài và tường của khu chưa mở rộng (phải mua mở rộng).
+export function isDemolishable(x, z) {
+  if (!inB(x, z) || grid.base[idx(x, z)] !== T.WALL) return false;
+  if (x <= 0 || x >= W - 1 || z <= 0 || z >= 15) return false;
+  return !EXPANSIONS.some((e) => !e.unlocked && e.walls.some(([a, c]) => a === x && c === z));
+}
+export const wallMeshList = () => [...wallMeshes.values()];
+export const wallTileOf = (mesh) => { for (const [k, m] of wallMeshes) if (m === mesh) return [k % W, Math.floor(k / W)]; return null; };
 
 const wallMeshes = new Map();
 const floorMeshes = new Map();

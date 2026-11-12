@@ -58,6 +58,20 @@ const PALETTES = [
   ['#14213d', '#fca311', '#e5e5e5', '#7a1f2b'],
   ['#2b2d42', '#c9a24a', '#edf2f4', '#3d6b5a'],
 ];
+// Đồ treo tường (tranh, đèn tường) theo ô tường — gỡ đi khi bức tường đó bị phá
+const wallDecor = new Map();
+function hangOnWall(grp, x, z, rotY) {
+  const tx = Math.floor(x - Math.sin(rotY) * 0.5), tz = Math.floor(z - Math.cos(rotY) * 0.5);
+  const k = `${tx},${tz}`;
+  if (!wallDecor.has(k)) wallDecor.set(k, []);
+  wallDecor.get(k).push(grp);
+}
+game.on('wallRemoved', (x, z) => {
+  const k = `${x},${z}`;
+  for (const g of wallDecor.get(k) || []) game.scene.remove(g);
+  wallDecor.delete(k);
+});
+
 let pSeed = 3;
 export function addPainting(x, y, z, rotY, w = 1.3, h = 0.9) {
   const pal = PALETTES[pSeed++ % PALETTES.length];
@@ -73,6 +87,7 @@ export function addPainting(x, y, z, rotY, w = 1.3, h = 0.9) {
   art.position.z = 0.025; grp.add(art);
   grp.position.set(x, y, z); grp.rotation.y = rotY;
   game.scene.add(grp);
+  hangOnWall(grp, x, z, rotY);
 }
 
 function addSconce(x, z, rotY) {
@@ -82,6 +97,7 @@ function addSconce(x, z, rotY) {
   shade.position.set(0, 0.12, 0.1); g.add(shade);
   g.position.set(x, 1.9, z); g.rotation.y = rotY;
   game.scene.add(g);
+  hangOnWall(g, x, z, rotY);
 }
 
 // ===== Biển OPEN / CLOSED + mái hiên =====
