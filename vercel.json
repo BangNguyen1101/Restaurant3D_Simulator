@@ -5,6 +5,6 @@
   "buildCommand": "node scripts/build-static.js",
   "outputDirectory": "dist",
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://THAY-BANG-TEN-RENDER.onrender.com/api/:path*" }
+    { "source": "/api/:path*", "destination": "https://nhahang3d-api.onrender.com" }
   ]
 }
