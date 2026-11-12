@@ -9,8 +9,16 @@ import { OPEN_H } from './daynight.js';
 
 export const saveState = { slot: null, dbOnline: false };
 
+// Gọi API; lỗi mạng tạm thời (Wi-Fi chập chờn, VPN bật/tắt, máy chủ đang thức dậy) thì tự thử lại vài lần
 async function api(method, url, body) {
-  const r = await fetch(url, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+  const opts = { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined };
+  let r;
+  for (let attempt = 1; ; attempt++) {
+    try { r = await fetch(url, opts); break; } catch (e) {
+      if (attempt >= 4) throw new Error('Mất kết nối mạng tới máy chủ — kiểm tra Wi-Fi / VPN / tường lửa rồi thử lại');
+      await new Promise((ok) => setTimeout(ok, 800 * attempt));
+    }
+  }
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
   return data;
