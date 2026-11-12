@@ -223,7 +223,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyN') setMode('supply');
   if (e.code === 'KeyC') setMode('recipes');
   if (e.code === 'KeyK') saveGame();
-  if (e.code === 'Enter' && nextDay()) $('summary').style.display = 'none';
+  if (e.code === 'Enter') pressEnter();
   const n = parseInt(e.key, 10);
   if (mode === 'build') {
     if (n >= 1 && n <= SHOP.length) selectShop(n - 1);
@@ -268,9 +268,26 @@ game.on('dayEnd', (s) => {
       <tr><td>Lương nhân viên (${game.bots.length} người)</td><td class="neg">-$${s.wages}</td></tr>
       <tr class="tot"><td>Lãi / lỗ trong ngày</td><td class="${s.profit >= 0 ? 'pos' : 'neg'}">${s.profit >= 0 ? '+' : '-'}$${Math.abs(s.profit)}</td></tr>
     </table>
-    <div class="hint">Ban đêm quán đóng cửa — tranh thủ nhập hàng (N), mua đồ (B), mở rộng quán.<br><b>Bấm Enter để bắt đầu ngày mới</b></div>`;
+    <div class="hint">Ban đêm quán đóng cửa — tranh thủ nhập hàng, mua đồ, sắp xếp lại quán.<br><b>Bấm Enter để đóng bảng này</b> và bắt đầu sắp xếp</div>`;
   $('summary').style.display = 'block';
+  night = 'summary';
 });
+
+// Cuối ngày bấm Enter 2 lần: lần 1 đóng bảng tổng kết để rảnh tay sắp xếp quán, lần 2 mới sang ngày mới
+let night = null; // null | 'summary' | 'arrange'
+function pressEnter() {
+  if (night === 'summary') {
+    $('summary').style.display = 'none';
+    $('nightbar').style.display = 'block';
+    night = 'arrange';
+    return;
+  }
+  if (night === 'arrange' && nextDay()) {
+    $('nightbar').style.display = 'none';
+    night = null;
+    saveGame(game.day, null, true); // lưu luôn bố cục vừa sắp xếp
+  }
+}
 
 let hudT = 0;
 function updateHUD(dt) {
@@ -363,7 +380,7 @@ function tick(dt) {
 // Debug: tua nhanh mô phỏng N giây (gõ trong console: game.simulate(60))
 game.simulate = (sec) => { for (let t = 0; t < sec; t += 1 / 30) tick(1 / 30); };
 game.renderNow = () => { hudT = 0; updateHUD(0); for (const c of game.customers) c.updateLabel(); for (const s of game.stations) s.update(0); renderer.render(scene, camera); };
-game.nextDay = () => { if (nextDay()) $('summary').style.display = 'none'; };
+game.nextDay = () => { pressEnter(); pressEnter(); }; // debug: bỏ qua bước sắp xếp
 
 const clock = new THREE.Clock();
 function loop() {

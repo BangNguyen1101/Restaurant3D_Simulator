@@ -89,7 +89,9 @@ export function nextDay() {
   game.day++;
   game.hour = OPEN_H - 0.25;
   game.dayOver = false;
-  game.daily = { revenue: 0, tips: 0, spent: 0, served: 0, lost: 0 };
+  // tiền chi trong đêm (sau khi đã tổng kết) được tính vào chi tiêu của ngày mới
+  const nightSpent = Math.max(0, game.daily.spent - (game.summary ? game.summary.spent : 0));
+  game.daily = { revenue: 0, tips: 0, spent: nightSpent, served: 0, lost: 0 };
   game.emit('dayStart');
   return true;
 }

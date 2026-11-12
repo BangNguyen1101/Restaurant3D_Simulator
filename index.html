@@ -85,6 +85,8 @@
   #summary .tot td { border-top: 1px solid #555; padding-top: 8px; font-size: 16px; }
   .pos { color: #6dff9a; } .neg { color: #ff6b6b; }
   #summary .hint { margin-top: 12px; font-size: 13px; opacity: .9; line-height: 1.5; }
+  #nightbar { top: 118px; left: 50%; transform: translateX(-50%); display: none; font-size: 14px; text-align: center; line-height: 1.5; border-color: rgba(201,162,74,.6); white-space: nowrap; }
+  #nightbar b { color: #ffd84d; }
   #overlay { position: fixed; inset: 0; background: rgba(8,10,14,.82); display: flex; align-items: center; justify-content: center; cursor: pointer; }
   #overlay .box { max-width: 640px; padding: 28px 32px; background: #1b2029; border-radius: 16px; border: 1px solid #333c4a; line-height: 1.6; }
   #overlay h1 { margin: 0 0 6px; font-size: 34px; color: #ffd84d; }
@@ -120,6 +122,7 @@
 <div id="supply"></div>
 <div id="recipes"></div>
 <div id="summary"></div>
+<div id="nightbar" class="panel">🌙 <b>Ban đêm</b> — sắp xếp lại quán theo ý bạn: <b>N</b> nhập hàng · <b>B</b> mua đồ, <b>7</b> di chuyển, <b>8</b> phá tường · <b>E</b> vào biển mở rộng<br>Xong thì bấm <b>Enter</b> để sang ngày mới</div>
 <div id="side" class="panel"><div id="orders"></div></div>
 <div id="held" class="panel">Tay không</div>
 <div id="help" class="panel">
