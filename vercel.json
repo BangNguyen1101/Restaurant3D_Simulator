@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "echo bo qua",
+  "buildCommand": "node scripts/build-static.js",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://THAY-BANG-TEN-RENDER.onrender.com/api/:path*" }
+  ]
+}

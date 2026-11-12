@@ -1,6 +1,6 @@
-// Server: phục vụ file game + API lưu/tải tiến trình vào SQL Server.
+// Server: phục vụ file game + API lưu/tải tiến trình vào PostgreSQL.
 //   npm install   (lần đầu)
-//   npm start     -> http://localhost:5173
+//   npm start     -> http://localhost:5173   (đọc DATABASE_URL trong file .env)
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -29,7 +29,7 @@ const validSlot = (s) => typeof s === 'string' && s.trim().length > 0 && s.lengt
 
 async function api(req, res, url) {
   if (url === '/api/status') return sendJSON(res, 200, { db: dbReady, error: dbError });
-  if (!dbReady) return sendJSON(res, 503, { error: 'Chưa kết nối được SQL Server: ' + dbError });
+  if (!dbReady) return sendJSON(res, 503, { error: 'Chưa kết nối được cơ sở dữ liệu: ' + dbError });
   if (url === '/api/saves' && req.method === 'GET') return sendJSON(res, 200, await db.listSaves());
   const m = url.match(/^\/api\/saves\/(.+)$/);
   if (!m) return sendJSON(res, 404, { error: 'Không có API này' });
@@ -57,8 +57,8 @@ http.createServer(async (req, res) => {
   const file = path.normalize(path.join(root, url === '/' ? 'index.html' : url));
   const rel = path.relative(root, file);
   const blocked = rel.startsWith('..') || rel.split(path.sep).some((p) => p.startsWith('.')) // .env, .git, .claude...
-    || /^(node_modules|db|logs|deploy)(\\|\/|$)/.test(rel)
-    || /^(package(-lock)?\.json|serve\.js|web\.config.*|.*\.(md|ps1|zip))$/i.test(rel); // web.config chứa mật khẩu DB
+    || /^(node_modules|db|logs|deploy|scripts|dist)(\\|\/|$)/.test(rel)
+    || /^(package(-lock)?\.json|serve\.js|vercel\.json|saves-export\.json|web\.config.*|.*\.(md|ps1|zip|ya?ml))$/i.test(rel);
   if (blocked) { res.writeHead(403); return res.end(); }
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(404); return res.end('Not found'); }
@@ -67,6 +67,14 @@ http.createServer(async (req, res) => {
   });
 }).listen(port, () => console.log(`Nha Hang 3D: http://localhost:${port}`));
 
-db.connect()
-  .then((info) => { dbReady = true; console.log(`SQL Server OK: ${info.server} / ${info.database} (${info.auth})`); })
-  .catch((e) => { dbError = e.message; console.error('Khong ket noi duoc SQL Server:', e.message, '\n-> Game van chay nhung khong luu duoc.'); });
+// Kết nối CSDL; lỗi thì thử lại mỗi 15 giây (CSDL đám mây có thể đang khởi động)
+function connectDb() {
+  db.connect()
+    .then((info) => { dbReady = true; dbError = null; console.log(`PostgreSQL OK: ${info.server}`); })
+    .catch((e) => {
+      dbError = e.message;
+      console.error('Khong ket noi duoc PostgreSQL:', e.message, '-> thu lai sau 15 giay (game van chay nhung chua luu duoc).');
+      setTimeout(connectDb, 15000);
+    });
+}
+connectDb();

@@ -5,3 +5,5 @@ web.config
 logs/
 deploy/
 *.zip
+saves-export.json
+dist/

@@ -1,60 +1,42 @@
-// Kết nối SQL Server + các hàm lưu/tải tiến trình.
-// Hai chế độ (chọn tự động theo biến môi trường):
-//  - Có DB_USER  -> đăng nhập SQL (user/mật khẩu), dùng cho Azure SQL / server trên cloud.
-//  - Không có    -> Windows Authentication qua ODBC, dùng cho SQL Server trên máy bạn.
+// Kết nối PostgreSQL + các hàm lưu/tải tiến trình.
+// Cấu hình bằng biến môi trường DATABASE_URL, ví dụ:
+//   - Neon (đám mây):  postgresql://user:pass@ep-xxx.aws.neon.tech/neondb?sslmode=require
+//   - Máy cá nhân:     postgresql://postgres:postgres@localhost:5432/nhahang3d
 const fs = require('fs');
 const path = require('path');
+const { Pool } = require('pg');
 
-const USE_SQL_AUTH = !!process.env.DB_USER;
-const sql = USE_SQL_AUTH ? require('mssql') : require('mssql/msnodesqlv8');
-
-const SERVER = process.env.DB_SERVER || 'localhost';          // vd: localhost\SQLEXPRESS hoặc ten.database.windows.net
-const DATABASE = process.env.DB_NAME || 'NhaHang3D';
-const DRIVER = process.env.DB_DRIVER || 'ODBC Driver 17 for SQL Server';
-
-function config(db) {
-  if (USE_SQL_AUTH) {
-    return {
-      server: SERVER,
-      port: Number(process.env.DB_PORT) || 1433,
-      database: db,
-      user: process.env.DB_USER,
-      password: process.env.DB_PASSWORD,
-      options: { encrypt: true, trustServerCertificate: process.env.DB_TRUST_CERT === 'true' },
-      pool: { max: 10, min: 0, idleTimeoutMillis: 30000 },
-    };
-  }
-  return { connectionString: `Driver={${DRIVER}};Server=${SERVER};Database=${db};Trusted_Connection=yes;` };
-}
-
+const URL = process.env.DATABASE_URL;
 let pool;
 
-// Máy nhà: tự tạo database nếu chưa có. (Trên Azure, database được tạo trên trang quản trị.)
-async function ensureDatabase() {
-  if (USE_SQL_AUTH) return;
-  const master = await new sql.ConnectionPool(config('master')).connect();
-  try {
-    await master.request().input('db', sql.NVarChar(128), DATABASE)
-      .query(`IF DB_ID(@db) IS NULL BEGIN DECLARE @s NVARCHAR(300) = N'CREATE DATABASE ' + QUOTENAME(@db); EXEC(@s); END`);
-  } finally { await master.close(); }
+function hostOf(url) {
+  try { return new globalThis.URL(url).hostname; } catch { return '?'; }
 }
 
-// Chạy db/schema.sql (tách theo GO) để tạo bảng nếu chưa có
+// Chạy db/schema.sql để tạo bảng nếu chưa có
 async function initSchema() {
   const script = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
-  const batches = script.split(/^\s*GO\s*$/im).map((b) => b.trim()).filter(Boolean);
-  for (const b of batches) await pool.request().batch(b);
+  await pool.query(script);
 }
 
 async function connect() {
-  await ensureDatabase();
-  pool = await new sql.ConnectionPool(config(DATABASE)).connect();
+  if (!URL) throw new Error('Chưa cấu hình DATABASE_URL (xem file .env.example)');
+  const local = /@(localhost|127\.0\.0\.1)(:|\/)/.test(URL);
+  pool = new Pool({
+    connectionString: URL,
+    ssl: local ? false : { rejectUnauthorized: false }, // Neon/Render bắt buộc SSL
+    max: 5,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 15000,
+  });
+  pool.on('error', (e) => console.error('PostgreSQL pool error:', e.message)); // mất kết nối tạm thời không làm sập server
   await initSchema();
-  return { server: SERVER, database: DATABASE, auth: USE_SQL_AUTH ? 'SQL login' : 'Windows' };
+  return { server: hostOf(URL), database: 'PostgreSQL' };
 }
 
 const ITEM_TYPES = new Set(['table', 'stove', 'board', 'counter', 'plates', 'sink', 'trash',
-  'crate_bun', 'crate_meat', 'crate_lettuce', 'crate_tomato']);
+  'crate_bun', 'crate_meat', 'crate_lettuce', 'crate_tomato',
+  'wall_removed']); // ô tường trong nhà người chơi đã phá
 const INGREDIENTS = new Set(['bun', 'meat', 'lettuce', 'tomato']);
 const int = (v, min = 0, max = 1e9) => {
   const n = Math.trunc(Number(v));
@@ -62,99 +44,109 @@ const int = (v, min = 0, max = 1e9) => {
   return n;
 };
 
+// Tên cột trả về giữ nguyên như bản SQL Server cũ (SlotName, Day…) để phần game không phải sửa
 async function listSaves() {
-  const r = await pool.request().query('SELECT * FROM dbo.vw_SaveOverview ORDER BY UpdatedAt DESC');
-  return r.recordset;
+  const r = await pool.query(`
+    SELECT save_id AS "SaveId", slot_name AS "SlotName", day AS "Day", money AS "Money",
+           total_served AS "TotalServed", total_lost AS "TotalLost", updated_at AS "UpdatedAt",
+           tables AS "Tables", staff AS "Staff", total_profit AS "TotalProfit"
+    FROM vw_save_overview ORDER BY updated_at DESC`);
+  return r.rows;
 }
 
 async function loadSave(slot) {
-  const q = (text) => pool.request().input('slot', sql.NVarChar(50), slot).query(text);
-  const s = (await q('SELECT * FROM dbo.Saves WHERE SlotName = @slot')).recordset[0];
+  const s = (await pool.query('SELECT * FROM saves WHERE slot_name = $1', [slot])).rows[0];
   if (!s) return null;
-  const byId = (text) => pool.request().input('id', sql.Int, s.SaveId).query(text);
+  const q = (text) => pool.query(text, [s.save_id]);
   const [inv, furn, staff, exp, reports] = await Promise.all([
-    byId('SELECT Ingredient, Quantity FROM dbo.SaveInventory WHERE SaveId = @id'),
-    byId('SELECT ItemType, X, Z, Rotation FROM dbo.SaveFurniture WHERE SaveId = @id ORDER BY FurnitureId'),
-    byId('SELECT Role FROM dbo.SaveStaff WHERE SaveId = @id ORDER BY StaffId'),
-    byId('SELECT ExpansionNo FROM dbo.SaveExpansions WHERE SaveId = @id ORDER BY ExpansionNo'),
-    byId('SELECT Day, Served, Lost, Revenue, Tips, Spent, Wages, Profit FROM dbo.DayReports WHERE SaveId = @id ORDER BY Day'),
+    q('SELECT ingredient, quantity FROM save_inventory WHERE save_id = $1'),
+    q('SELECT item_type, x, z, rotation FROM save_furniture WHERE save_id = $1 ORDER BY furniture_id'),
+    q('SELECT role FROM save_staff WHERE save_id = $1 ORDER BY staff_id'),
+    q('SELECT expansion_no FROM save_expansions WHERE save_id = $1 ORDER BY expansion_no'),
+    q(`SELECT day AS "Day", served AS "Served", lost AS "Lost", revenue AS "Revenue", tips AS "Tips",
+              spent AS "Spent", wages AS "Wages", profit AS "Profit"
+       FROM day_reports WHERE save_id = $1 ORDER BY day`),
   ]);
   return {
-    slot: s.SlotName, day: s.Day, money: s.Money, totalServed: s.TotalServed, totalLost: s.TotalLost,
-    updatedAt: s.UpdatedAt,
-    inventory: Object.fromEntries(inv.recordset.map((r) => [r.Ingredient, r.Quantity])),
-    furniture: furn.recordset.map((r) => ({ type: r.ItemType, x: r.X, z: r.Z, rot: r.Rotation })),
-    staff: staff.recordset.map((r) => r.Role),
-    expansions: exp.recordset.map((r) => r.ExpansionNo),
-    reports: reports.recordset,
+    slot: s.slot_name, day: s.day, money: s.money, totalServed: s.total_served, totalLost: s.total_lost,
+    updatedAt: s.updated_at,
+    inventory: Object.fromEntries(inv.rows.map((r) => [r.ingredient, r.quantity])),
+    furniture: furn.rows.map((r) => ({ type: r.item_type, x: r.x, z: r.z, rot: r.rotation })),
+    staff: staff.rows.map((r) => r.role),
+    expansions: exp.rows.map((r) => r.expansion_no),
+    reports: reports.rows,
   };
 }
 
 // Lưu toàn bộ tiến trình trong 1 transaction (ghi đè ô lưu cũ)
 async function saveGame(slot, d) {
-  const tx = new sql.Transaction(pool);
-  await tx.begin();
+  // kiểm tra hết dữ liệu trước khi mở transaction
+  const vals = {
+    day: int(d.day, 1, 100000), money: int(d.money, -1e9, 1e9),
+    served: int(d.totalServed), lost: int(d.totalLost),
+  };
+  const inventory = Object.entries(d.inventory || {}).map(([ing, qty]) => {
+    if (!INGREDIENTS.has(ing)) throw new Error(`Nguyên liệu lạ: ${ing}`);
+    return [ing, int(qty)];
+  });
+  const furniture = (d.furniture || []).map((f) => {
+    if (!ITEM_TYPES.has(f.type)) throw new Error(`Loại đồ lạ: ${f.type}`);
+    return [f.type, int(f.x, 0, 100), int(f.z, 0, 100), int(f.rot || 0, 0, 3)];
+  });
+  const staff = (d.staff || []).map((role) => {
+    if (role !== 'chef' && role !== 'waiter') throw new Error(`Vai trò lạ: ${role}`);
+    return role;
+  });
+  const expansions = (d.expansions || []).map((no) => int(no, 1, 10));
+  let report = null;
+  if (d.report) {
+    const r = d.report;
+    report = ['day', 'served', 'lost', 'revenue', 'tips', 'spent', 'wages'].map((k) => int(r[k]));
+    report.push(int(r.profit, -1e9, 1e9));
+  }
+
+  const c = await pool.connect();
   try {
-    const req = () => new sql.Request(tx);
-    const up = await req()
-      .input('slot', sql.NVarChar(50), slot)
-      .input('day', sql.Int, int(d.day, 1, 100000))
-      .input('money', sql.Int, int(d.money, -1e9, 1e9))
-      .input('served', sql.Int, int(d.totalServed))
-      .input('lost', sql.Int, int(d.totalLost))
-      .query(`
-        MERGE dbo.Saves WITH (HOLDLOCK) AS t
-        USING (SELECT @slot AS SlotName) AS s ON t.SlotName = s.SlotName
-        WHEN MATCHED THEN UPDATE SET Day=@day, Money=@money, TotalServed=@served, TotalLost=@lost, UpdatedAt=SYSDATETIME()
-        WHEN NOT MATCHED THEN INSERT (SlotName, Day, Money, TotalServed, TotalLost) VALUES (@slot, @day, @money, @served, @lost)
-        OUTPUT inserted.SaveId;`);
-    const id = up.recordset[0].SaveId;
-    for (const t of ['SaveInventory', 'SaveFurniture', 'SaveStaff', 'SaveExpansions']) {
-      await req().input('id', sql.Int, id).query(`DELETE FROM dbo.${t} WHERE SaveId = @id`);
+    await c.query('BEGIN');
+    const up = await c.query(`
+      INSERT INTO saves (slot_name, day, money, total_served, total_lost) VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT (slot_name) DO UPDATE SET day = EXCLUDED.day, money = EXCLUDED.money,
+        total_served = EXCLUDED.total_served, total_lost = EXCLUDED.total_lost, updated_at = now()
+      RETURNING save_id`, [slot, vals.day, vals.money, vals.served, vals.lost]);
+    const id = up.rows[0].save_id;
+    for (const t of ['save_inventory', 'save_furniture', 'save_staff', 'save_expansions']) {
+      await c.query(`DELETE FROM ${t} WHERE save_id = $1`, [id]);
     }
-    for (const [ing, qty] of Object.entries(d.inventory || {})) {
-      if (!INGREDIENTS.has(ing)) throw new Error(`Nguyên liệu lạ: ${ing}`);
-      await req().input('id', sql.Int, id).input('ing', sql.VarChar(20), ing).input('q', sql.Int, int(qty))
-        .query('INSERT INTO dbo.SaveInventory (SaveId, Ingredient, Quantity) VALUES (@id, @ing, @q)');
+    for (const [ing, qty] of inventory) {
+      await c.query('INSERT INTO save_inventory (save_id, ingredient, quantity) VALUES ($1, $2, $3)', [id, ing, qty]);
     }
-    for (const f of d.furniture || []) {
-      if (!ITEM_TYPES.has(f.type)) throw new Error(`Loại đồ lạ: ${f.type}`);
-      await req().input('id', sql.Int, id).input('type', sql.VarChar(20), f.type)
-        .input('x', sql.Int, int(f.x, 0, 100)).input('z', sql.Int, int(f.z, 0, 100)).input('rot', sql.TinyInt, int(f.rot || 0, 0, 3))
-        .query('INSERT INTO dbo.SaveFurniture (SaveId, ItemType, X, Z, Rotation) VALUES (@id, @type, @x, @z, @rot)');
+    if (furniture.length) { // ghi nhiều dòng trong 1 câu lệnh
+      const ph = furniture.map((_, i) => `($1, $${i * 4 + 2}, $${i * 4 + 3}, $${i * 4 + 4}, $${i * 4 + 5})`).join(', ');
+      await c.query(`INSERT INTO save_furniture (save_id, item_type, x, z, rotation) VALUES ${ph}`, [id, ...furniture.flat()]);
     }
-    for (const role of d.staff || []) {
-      if (role !== 'chef' && role !== 'waiter') throw new Error(`Vai trò lạ: ${role}`);
-      await req().input('id', sql.Int, id).input('role', sql.VarChar(10), role)
-        .query('INSERT INTO dbo.SaveStaff (SaveId, Role) VALUES (@id, @role)');
+    for (const role of staff) await c.query('INSERT INTO save_staff (save_id, role) VALUES ($1, $2)', [id, role]);
+    for (const no of expansions) await c.query('INSERT INTO save_expansions (save_id, expansion_no) VALUES ($1, $2)', [id, no]);
+    if (report) {
+      await c.query(`
+        INSERT INTO day_reports (save_id, day, served, lost, revenue, tips, spent, wages, profit)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (save_id, day) DO UPDATE SET served = EXCLUDED.served, lost = EXCLUDED.lost,
+          revenue = EXCLUDED.revenue, tips = EXCLUDED.tips, spent = EXCLUDED.spent,
+          wages = EXCLUDED.wages, profit = EXCLUDED.profit`, [id, ...report]);
     }
-    for (const no of d.expansions || []) {
-      await req().input('id', sql.Int, id).input('no', sql.Int, int(no, 1, 10))
-        .query('INSERT INTO dbo.SaveExpansions (SaveId, ExpansionNo) VALUES (@id, @no)');
-    }
-    if (d.report) {
-      const r = d.report;
-      const rq = req().input('id', sql.Int, id);
-      for (const k of ['day', 'served', 'lost', 'revenue', 'tips', 'spent', 'wages']) rq.input(k, sql.Int, int(r[k]));
-      rq.input('profit', sql.Int, int(r.profit, -1e9, 1e9));
-      await rq.query(`
-        MERGE dbo.DayReports AS t
-        USING (SELECT @id AS SaveId, @day AS Day) AS s ON t.SaveId = s.SaveId AND t.Day = s.Day
-        WHEN MATCHED THEN UPDATE SET Served=@served, Lost=@lost, Revenue=@revenue, Tips=@tips, Spent=@spent, Wages=@wages, Profit=@profit
-        WHEN NOT MATCHED THEN INSERT (SaveId, Day, Served, Lost, Revenue, Tips, Spent, Wages, Profit)
-          VALUES (@id, @day, @served, @lost, @revenue, @tips, @spent, @wages, @profit);`);
-    }
-    await tx.commit();
+    await c.query('COMMIT');
     return id;
   } catch (e) {
-    await tx.rollback();
+    await c.query('ROLLBACK').catch(() => {});
     throw e;
+  } finally {
+    c.release();
   }
 }
 
 async function deleteSave(slot) {
-  const r = await pool.request().input('slot', sql.NVarChar(50), slot).query('DELETE FROM dbo.Saves WHERE SlotName = @slot');
-  return r.rowsAffected[0] > 0;
+  const r = await pool.query('DELETE FROM saves WHERE slot_name = $1', [slot]);
+  return r.rowCount > 0;
 }
 
 module.exports = { connect, listSaves, loadSave, saveGame, deleteSave };

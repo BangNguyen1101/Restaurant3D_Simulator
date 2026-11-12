@@ -2,30 +2,33 @@
 
 ## Chạy game
 ```
-npm install      # lần đầu: cài mssql + msnodesqlv8
-npm start        # = node serve.js
+npm install      # lần đầu: cài thư viện pg
+copy .env.example .env   # rồi điền DATABASE_URL (PostgreSQL, ví dụ Neon)
+npm start        # = node serve.js, đọc biến trong .env
 ```
 Mở http://localhost:5173 → chọn **Chơi mới** hoặc **Tiếp tục** một ô lưu.
 
-## Lưu tiến trình vào SQL Server
-- Kết nối bằng **Windows Authentication** tới SQL Server trên máy (`localhost`, driver *ODBC Driver 17 for SQL Server*).
-- Khi server khởi động sẽ tự chạy `db/schema.sql` → tạo database **NhaHang3D** và các bảng nếu chưa có.
-- Đổi server/instance bằng biến môi trường, ví dụ SQL Express: `set DB_SERVER=localhost\SQLEXPRESS` rồi `npm start` (còn có `DB_NAME`, `DB_DRIVER`).
+**Đưa lên web (Vercel + Render + Neon):** xem [DEPLOY.md](DEPLOY.md).
+
+## Lưu tiến trình vào PostgreSQL
+- Chuỗi kết nối đặt trong biến môi trường `DATABASE_URL` (file `.env` trên máy, ô Environment trên Render).
+- Khi server khởi động sẽ tự chạy `db/schema.sql` → tạo các bảng nếu chưa có. Mất kết nối thì server tự thử lại mỗi 15 giây.
 - **Tự lưu** khi kết thúc mỗi ngày (kèm báo cáo ngày), **phím K** để lưu bất cứ lúc nào. Tải lại sẽ bắt đầu từ sáng của ngày đã lưu.
+- Nhập ô lưu từ bản SQL Server cũ: `npm run import-saves -- saves-export.json`.
 
 | Bảng | Nội dung |
 |---|---|
-| `Saves` | Ô lưu: tên, ngày, tiền, tổng khách phục vụ / bỏ về |
-| `SaveInventory` | Tồn kho từng nguyên liệu |
-| `SaveFurniture` | Bàn ghế + thiết bị bếp đã đặt (loại, X, Z, hướng xoay) |
-| `SaveStaff` | Nhân viên đã thuê |
-| `SaveExpansions` | Khu đã mở rộng |
-| `DayReports` | Báo cáo kinh doanh cuối mỗi ngày |
-| `vw_SaveOverview` (view) | Tổng quan từng ô lưu: số bàn, nhân viên, tổng lãi |
+| `saves` | Ô lưu: tên, ngày, tiền, tổng khách phục vụ / bỏ về |
+| `save_inventory` | Tồn kho từng nguyên liệu |
+| `save_furniture` | Bàn ghế + thiết bị bếp đã đặt (loại, X, Z, hướng xoay); `wall_removed` = ô tường đã phá |
+| `save_staff` | Nhân viên đã thuê |
+| `save_expansions` | Khu đã mở rộng |
+| `day_reports` | Báo cáo kinh doanh cuối mỗi ngày |
+| `vw_save_overview` (view) | Tổng quan từng ô lưu: số bàn, nhân viên, tổng lãi |
 
 API (trong `serve.js`): `GET /api/saves`, `GET/POST/DELETE /api/saves/:tên`, `GET /api/status`. Code truy vấn ở `db/db.js` (dùng tham số hoá, lưu trong 1 transaction).
 
-**Điều khiển:** WASD đi · Shift chạy · Chuột nhìn · E / Click tương tác · F cắt trên thớt · **C** sổ công thức · **N** nhập hàng · **B** xây/thuê người · 1–6 chọn · R xoay bàn · **Enter** sang ngày mới · Esc tạm dừng.
+**Điều khiển:** WASD đi · Shift chạy · Chuột nhìn · E / Click tương tác · F cắt trên thớt · **C** sổ công thức · **N** nhập hàng · **B** xây/thuê người · 1–8 chọn (7 di chuyển đồ, 8 phá tường) · R xoay bàn · **M** tắt/bật âm thanh · **Enter** sang ngày mới · Esc tạm dừng.
 
 **Vòng chơi:** mở cửa 08:00–18:00 (1 giờ game = 30 giây). 17:30 ngừng đón khách, 18:00 đóng cửa, phục vụ nốt rồi xem tổng kết ngày (doanh thu, tip, chi tiêu, lương). Bắt đầu với 2 bàn 2 người → mua thêm bàn → hết chỗ thì mở rộng (Phòng ăn giữa $300 → Phòng VIP $700).
 

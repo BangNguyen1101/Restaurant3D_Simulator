@@ -1,79 +1,118 @@
-# Chia sẻ game qua Cloudflare Tunnel
-
-Game và SQL Server vẫn chạy **trên máy bạn**. Cloudflare Tunnel tạo một đường link `https://....trycloudflare.com` để người khác truy cập vào máy bạn qua Internet — không cần mở port modem, không cần IP tĩnh, **không cần tài khoản**, miễn phí.
+# Đưa game lên web: Vercel + Render + Neon (miễn phí)
 
 ```
-Người chơi ──https──► Cloudflare ──đường hầm mã hoá──► cloudflared (máy bạn) ──► serve.js :5173 ──► SQL Server (máy bạn)
+Người chơi ──► Vercel (index.html + js/, game chạy trong trình duyệt)
+                 │  /api/*  (Vercel chuyển tiếp)
+                 ▼
+               Render (serve.js — REST API lưu/tải game)
+                 │
+                 ▼
+               Neon (PostgreSQL — các bảng saves, day_reports…)
 ```
 
-> Máy tắt / ngủ / mất mạng, hoặc bạn đóng cửa sổ tunnel → link ngừng hoạt động. Mỗi lần chạy lại, link **thay đổi**.
+Cả 3 dịch vụ đều **đăng nhập bằng tài khoản GitHub**, gói miễn phí, không cần thẻ. Tắt máy tính thì game vẫn chơi được.
+
+| Dịch vụ | Chứa gì | Giới hạn gói miễn phí |
+|---|---|---|
+| Vercel | Phần game (`index.html`, `js/`) — tạo bằng `scripts/build-static.js` | Thoải mái cho đồ án |
+| Render | Máy chủ API `serve.js` (cấu hình trong `render.yaml`) | **Ngủ sau 15 phút không ai chơi**, lần đầu vào lại chờ ~1 phút (menu hiện "Đang đánh thức máy chủ…") |
+| Neon | CSDL PostgreSQL | 0,5 GB — dư cho hàng nghìn ô lưu |
 
 ---
 
-## Bước 1 — Cài cloudflared (chỉ làm 1 lần)
+## Bước 0 — Đưa code lên GitHub
 
-Mở PowerShell:
-
-```powershell
-winget install --id Cloudflare.cloudflared
-```
-
-Đóng PowerShell, mở lại, kiểm tra:
+Render và Vercel lấy code từ repo GitHub `Restaurant3D_Simulator`. Code mới nhất phải nằm ở nhánh **main** trên GitHub:
 
 ```powershell
-cloudflared --version
+git checkout main
+git merge <nhánh đang làm>
+git push origin main
 ```
 
-> Nếu không dùng được winget: tải `cloudflared-windows-amd64.msi` từ trang chính thức
-> https://github.com/cloudflare/cloudflared/releases/latest rồi cài như phần mềm bình thường.
+> Các file bí mật (`.env`, `saves-export.json`) đã nằm trong `.gitignore`, không bị đẩy lên.
 
-## Bước 2 — Chạy game + mở link công khai
+## Bước 1 — Tạo CSDL trên Neon
 
-Trong thư mục dự án (`Desktop\My Project\NhaHang3D`):
+1. Vào **https://neon.tech** → **Sign up** → **Continue with GitHub**.
+2. Tạo project:
+   - Project name: `nhahang3d`
+   - Postgres version: để mặc định
+   - Region: **AWS Asia Pacific (Singapore)** (gần Việt Nam nhất, cùng khu với Render)
+3. Trên trang Dashboard bấm **Connect** → copy **Connection string**, dạng:
+   ```
+   postgresql://neondb_owner:xxxxxxxx@ep-xxxx-xxxx.ap-southeast-1.aws.neon.tech/neondb?sslmode=require
+   ```
+   ⚠️ Chuỗi này chứa mật khẩu — **không gửi cho ai, không dán lên GitHub**.
+
+Không cần tạo bảng bằng tay: máy chủ tự chạy `db/schema.sql` khi khởi động.
+
+## Bước 2 — (Tuỳ chọn) Chuyển ô lưu cũ từ SQL Server sang Neon
+
+Ô lưu "Vua Đầu Bết" đã được xuất ra file `saves-export.json` trong thư mục dự án.
+
+1. Trong thư mục `NhaHang3D`, tạo file **`.env`** (copy từ `.env.example`) với nội dung:
+   ```
+   DATABASE_URL=<chuỗi kết nối Neon ở bước 1>
+   ```
+2. Chạy:
+   ```powershell
+   npm install
+   npm run import-saves -- saves-export.json
+   ```
+   Kết quả: `Đã nhập "Vua Đầu Bết": ngày 7, ... (bỏ 30 đồ trùng) ...`
+
+Từ giờ `npm start` trên máy cũng dùng CSDL Neon này (đọc từ `.env`) — chơi trên máy hay trên web đều thấy cùng ô lưu.
+
+## Bước 3 — Chạy API trên Render
+
+1. Vào **https://render.com** → **Get Started** → **GitHub**.
+2. Bấm **New +** → **Blueprint** → **Connect** repo `Restaurant3D_Simulator` (lần đầu phải cho Render quyền đọc repo).
+3. Render đọc file `render.yaml` và hiện dịch vụ **nhahang3d-api** (gói Free). Ô **DATABASE_URL**: dán chuỗi kết nối Neon → **Apply**.
+4. Chờ 2–4 phút tới khi trạng thái **Live**. Copy địa chỉ dịch vụ, dạng `https://nhahang3d-api.onrender.com` (có thể có thêm vài ký tự ngẫu nhiên).
+5. Kiểm tra: mở `https://<địa-chỉ-render>/api/status` → thấy `{"db":true,"error":null}` là đã nối được Neon.
+
+> Nếu thấy `"db":false`: vào **Environment** của dịch vụ kiểm tra lại DATABASE_URL, rồi **Manual Deploy → Deploy latest commit**.
+
+## Bước 4 — Trỏ Vercel tới Render
+
+Mở `vercel.json`, thay `THAY-BANG-TEN-RENDER` bằng địa chỉ Render ở bước 3:
+
+```json
+{ "source": "/api/:path*", "destination": "https://nhahang3d-api.onrender.com/api/:path*" }
+```
+
+Rồi commit + push:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File start-public.ps1
+git add vercel.json
+git commit -m "Tro Vercel toi API Render"
+git push origin main
 ```
 
-Script sẽ: bật server game (kết nối SQL Server trên máy) → mở tunnel. Trong log hiện ra sẽ có khung như:
+## Bước 5 — Đưa game lên Vercel
 
-```
-+--------------------------------------------------------------------------------------------+
-|  Your quick Tunnel has been created! Visit it at (it may take some time to be reachable):  |
-|  https://ten-ngau-nhien-abc-xyz.trycloudflare.com                                          |
-+--------------------------------------------------------------------------------------------+
-```
+1. Vào **https://vercel.com** → **Sign Up** → **Continue with GitHub**.
+2. **Add New…** → **Project** → chọn repo `Restaurant3D_Simulator` → **Import**.
+3. Framework Preset: **Other** (giữ nguyên các ô khác — `vercel.json` đã cấu hình build và thư mục `dist`) → **Deploy**.
+4. Xong sẽ có link dạng `https://restaurant3d-simulator.vercel.app` → **đây là link gửi cho mọi người**.
 
-→ Gửi link đó cho mọi người. Đợi khoảng 10–30 giây sau khi link xuất hiện thì mới vào được.
+## Bước 6 — Kiểm tra
 
-**Dừng chia sẻ:** bấm `Ctrl + C` trong cửa sổ đó (tắt cả tunnel và server game).
+1. Mở `https://<link-vercel>/api/status` → `{"db":true,...}` (Vercel đã chuyển tiếp sang Render).
+2. Mở link game → menu hiện 🟢 *Đã kết nối cơ sở dữ liệu* và danh sách ô lưu.
+   - Lần đầu sau một thời gian không ai chơi, menu hiện *"Đang đánh thức máy chủ…"* khoảng 1 phút — bình thường với gói miễn phí của Render.
+3. Chơi thử, bấm **K** lưu → tải lại trang → **Tiếp tục** thấy đúng tiến trình.
 
-### Cách làm tay (nếu không muốn dùng script)
-Mở 2 cửa sổ PowerShell trong thư mục dự án:
-```powershell
-npm start                                        # cửa sổ 1: server game
-cloudflared tunnel --url http://localhost:5173   # cửa sổ 2: tunnel
-```
+## Cập nhật game về sau
 
-## Bước 3 — Kiểm tra
-
-1. Mở `https://<link-của-bạn>/api/status` → thấy `{"db":true,...}` là game đã nối SQL Server.
-2. Thử mở link bằng **điện thoại dùng 4G** (không dùng wifi nhà) để chắc chắn người ngoài vào được.
+Chỉ cần `git push origin main` — Render và Vercel **tự build lại** trong vài phút.
 
 ---
 
-## Lưu ý khi demo
+## Lưu ý
 
-- **Không để máy ngủ:** Settings → System → Power → *Screen and sleep* → "When plugged in, put my device to sleep after" = **Never** trong lúc demo.
-- **SQL Server phải đang chạy** (nó tự chạy cùng Windows; nếu `/api/status` báo lỗi DB thì mở *Services* → khởi động `SQL Server (MSSQLSERVER)`).
-- Link miễn phí kiểu này dành cho thử nghiệm/demo: không cam kết thời gian hoạt động, giới hạn số kết nối đồng thời — thoải mái cho vài chục người chơi cùng lúc.
-- Điều khiển game cần **chuột + bàn phím** (khoá chuột kiểu FPS) — chơi trên máy tính, không chơi được trên điện thoại.
-- ⚠️ Chưa có đăng nhập người chơi: ai có link cũng thấy và xoá được ô lưu của người khác. Chỉ gửi link cho người bạn tin tưởng.
-
-## Muốn link cố định (không đổi mỗi lần chạy)?
-
-Cần: tài khoản Cloudflare (miễn phí) **và một tên miền riêng** (mua khoảng 30.000–300.000đ/năm, trỏ DNS về Cloudflare). Khi đó tạo *Named Tunnel* trong Cloudflare Zero Trust → link dạng `https://nhahang3d.ten-mien-cua-ban.com`, vẫn chạy từ máy bạn. Báo mình nếu bạn muốn làm bước này.
-
----
-
-*Ghi chú: `web.config.example` và `deploy.ps1` trong thư mục là phần chuẩn bị cho việc đưa lên hosting Windows (IIS) sau này nếu bạn tìm được host phù hợp — không cần cho cách Cloudflare Tunnel.*
+- Game điều khiển bằng **chuột + bàn phím** — chơi trên máy tính (Chrome/Edge).
+- ⚠️ Chưa có đăng nhập: ai có link cũng thấy và xoá được ô lưu của người khác. Chỉ gửi link cho người tin tưởng.
+- Đổi mật khẩu Neon (Neon → Roles → Reset password) nếu lỡ để lộ chuỗi kết nối, rồi cập nhật lại DATABASE_URL trên Render và trong `.env`.
+- Chạy trên máy cá nhân: `npm install` → tạo `.env` (bước 2) → `npm start` → http://localhost:5173.

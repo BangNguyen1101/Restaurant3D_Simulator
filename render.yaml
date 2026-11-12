@@ -1,0 +1,14 @@
+# Render Blueprint: máy chủ API của game (serve.js) — gói miễn phí.
+# Render → New → Blueprint → chọn repo này. Chuỗi kết nối Neon điền vào DATABASE_URL khi được hỏi.
+services:
+  - type: web
+    name: nhahang3d-api
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm install --omit=dev
+    startCommand: node serve.js
+    healthCheckPath: /api/status
+    envVars:
+      - key: DATABASE_URL
+        sync: false
