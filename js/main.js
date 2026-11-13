@@ -208,7 +208,7 @@ document.addEventListener('mousemove', (e) => {
 });
 document.addEventListener('mousedown', (e) => {
   if (game.paused) return;
-  if (e.button === 0) { if (mode === 'build') buyShop(); else if (mode === 'play') doInteract(); }
+  if (e.button === 0) { if (mode === 'build') buyShop(); else doInteract(); }
 });
 // Âm thanh chỉ được bật sau thao tác đầu tiên của người chơi (quy định của trình duyệt)
 addEventListener('pointerdown', initAudio);
@@ -217,7 +217,9 @@ addEventListener('keydown', (e) => {
   initAudio();
   if (e.code === 'KeyM' && e.target.tagName !== 'INPUT') { game.toast(toggleMute() ? '🔇 Đã tắt âm thanh (M để bật lại)' : '🔊 Đã bật âm thanh'); return; }
   if (game.paused) return;
-  if (e.code === 'KeyE' && mode === 'play') doInteract();
+  // E luôn dùng được để thao tác với món ăn (kể cả khi đang mở bảng xây dựng / nhập hàng / sổ công thức),
+  // trừ lúc đang cầm một món đồ để di chuyển
+  if (e.code === 'KeyE' && !(mode === 'build' && build.moving)) doInteract();
   if (e.code === 'KeyF' && target && target.kind === 'station' && chop(player, target)) flashPrompt('🔪 Bắt đầu cắt');
   if (e.code === 'KeyB') setMode('build');
   if (e.code === 'KeyN') setMode('supply');
@@ -284,6 +286,7 @@ function pressEnter() {
   }
   if (night === 'arrange' && nextDay()) {
     $('nightbar').style.display = 'none';
+    if (mode !== 'play') setMode(mode); // sang ngày mới thì thoát chế độ xây / nhập hàng / sổ công thức
     night = null;
     saveGame(game.day, null, true); // lưu luôn bố cục vừa sắp xếp
   }
@@ -310,6 +313,7 @@ function updateHUD(dt) {
         : `<b>DI CHUYỂN</b> — Nhìn vào bàn ghế / thiết bị rồi click để nhấc lên${build.target ? `<br>${build.target.kind === 'table' ? `Bàn ${build.target.no}` : build.target.def.name}${canMove(build.target) ? '' : ' <span style="color:#ff6b6b">(đang được dùng)</span>'}` : ''}`;
     } else if (s.key === 'wall') p = `<b>PHÁ TƯỜNG</b> ($${s.price}/ô) — Nhìn vào tường bên trong quán rồi click`;
     else p = `<b>CHẾ ĐỘ XÂY</b> — Click để đặt ${s.name} ($${s.price})${s.key === 'table' ? ' · R: xoay' : ''}`;
+    p += '<br><small style="opacity:.75">Bấm B để thoát chế độ xây · E vẫn dùng để nấu ăn</small>';
   } else if (target) {
     if (target.kind === 'station') p = describeStation(target, player.held);
     else if (target.kind === 'table') p = describeTable(target, player.held);
@@ -317,7 +321,7 @@ function updateHUD(dt) {
   }
   if (flash.t > 0) { flash.t -= dt; p = `<span class="flash">${flash.text}</span>` + (p ? '<br>' + p : ''); }
   if ($('prompt').innerHTML !== p) $('prompt').innerHTML = p;
-  $('cross').classList.toggle('on', !!target && mode === 'play');
+  $('cross').classList.toggle('on', !!target && mode !== 'build');
 
   if (toastT > 0) { toastT -= dt; if (toastT <= 0) $('toast').style.opacity = 0; }
 
