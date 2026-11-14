@@ -45,17 +45,18 @@ const int = (v, min = 0, max = 1e9) => {
 };
 
 // Tên cột trả về giữ nguyên như bản SQL Server cũ (SlotName, Day…) để phần game không phải sửa
-async function listSaves() {
+// Mọi hàm ô lưu đều lọc theo user_id: người chơi chỉ thấy, sửa, xoá được ô lưu của chính mình
+async function listSaves(userId) {
   const r = await pool.query(`
     SELECT save_id AS "SaveId", slot_name AS "SlotName", day AS "Day", money AS "Money",
            total_served AS "TotalServed", total_lost AS "TotalLost", updated_at AS "UpdatedAt",
            tables AS "Tables", staff AS "Staff", total_profit AS "TotalProfit"
-    FROM vw_save_overview ORDER BY updated_at DESC`);
+    FROM vw_save_overview WHERE user_id = $1 ORDER BY updated_at DESC`, [userId]);
   return r.rows;
 }
 
-async function loadSave(slot) {
-  const s = (await pool.query('SELECT * FROM saves WHERE slot_name = $1', [slot])).rows[0];
+async function loadSave(userId, slot) {
+  const s = (await pool.query('SELECT * FROM saves WHERE user_id = $1 AND slot_name = $2', [userId, slot])).rows[0];
   if (!s) return null;
   const q = (text) => pool.query(text, [s.save_id]);
   const [inv, furn, staff, exp, reports] = await Promise.all([
@@ -79,7 +80,8 @@ async function loadSave(slot) {
 }
 
 // Lưu toàn bộ tiến trình trong 1 transaction (ghi đè ô lưu cũ)
-async function saveGame(slot, d) {
+async function saveGame(userId, slot, d) {
+  if (!Number.isInteger(userId)) throw new Error('Thiếu người chơi');
   // kiểm tra hết dữ liệu trước khi mở transaction
   const vals = {
     day: int(d.day, 1, 100000), money: int(d.money, -1e9, 1e9),
@@ -109,10 +111,10 @@ async function saveGame(slot, d) {
   try {
     await c.query('BEGIN');
     const up = await c.query(`
-      INSERT INTO saves (slot_name, day, money, total_served, total_lost) VALUES ($1, $2, $3, $4, $5)
-      ON CONFLICT (slot_name) DO UPDATE SET day = EXCLUDED.day, money = EXCLUDED.money,
+      INSERT INTO saves (user_id, slot_name, day, money, total_served, total_lost) VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (user_id, slot_name) DO UPDATE SET day = EXCLUDED.day, money = EXCLUDED.money,
         total_served = EXCLUDED.total_served, total_lost = EXCLUDED.total_lost, updated_at = now()
-      RETURNING save_id`, [slot, vals.day, vals.money, vals.served, vals.lost]);
+      RETURNING save_id`, [userId, slot, vals.day, vals.money, vals.served, vals.lost]);
     const id = up.rows[0].save_id;
     for (const t of ['save_inventory', 'save_furniture', 'save_staff', 'save_expansions']) {
       await c.query(`DELETE FROM ${t} WHERE save_id = $1`, [id]);
@@ -144,9 +146,48 @@ async function saveGame(slot, d) {
   }
 }
 
-async function deleteSave(slot) {
-  const r = await pool.query('DELETE FROM saves WHERE slot_name = $1', [slot]);
+async function deleteSave(userId, slot) {
+  const r = await pool.query('DELETE FROM saves WHERE user_id = $1 AND slot_name = $2', [userId, slot]);
   return r.rowCount > 0;
 }
 
-module.exports = { connect, listSaves, loadSave, saveGame, deleteSave };
+// ===== Tài khoản & phiên đăng nhập =====
+async function createUser(username, passwordHash) {
+  try {
+    const r = await pool.query('INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING user_id, username', [username, passwordHash]);
+    return r.rows[0];
+  } catch (e) {
+    if (e.code === '23505') return null; // trùng tên đăng nhập
+    throw e;
+  }
+}
+async function findUser(username) {
+  const r = await pool.query('SELECT user_id, username, password_hash FROM users WHERE lower(username) = lower($1)', [username]);
+  return r.rows[0] || null;
+}
+async function createSession(userId, tokenHash, days) {
+  await pool.query(`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, now() + make_interval(days => $3))`, [tokenHash, userId, days]);
+  // dọn phiên hết hạn
+  await pool.query('DELETE FROM sessions WHERE expires_at < now()');
+}
+async function sessionUser(tokenHash) {
+  const r = await pool.query(`SELECT u.user_id, u.username FROM sessions s JOIN users u ON u.user_id = s.user_id
+                              WHERE s.token_hash = $1 AND s.expires_at > now()`, [tokenHash]);
+  return r.rows[0] || null;
+}
+async function deleteSession(tokenHash) {
+  await pool.query('DELETE FROM sessions WHERE token_hash = $1', [tokenHash]);
+}
+
+// Gán ô lưu cũ (chưa có chủ, từ trước khi có đăng nhập) cho một tài khoản
+async function assignSave(slot, username) {
+  const u = await findUser(username);
+  if (!u) throw new Error(`Không có tài khoản "${username}"`);
+  const r = await pool.query('UPDATE saves SET user_id = $1 WHERE user_id IS NULL AND slot_name = $2', [u.user_id, slot]);
+  return r.rowCount;
+}
+
+module.exports = {
+  connect, listSaves, loadSave, saveGame, deleteSave,
+  createUser, findUser, createSession, sessionUser, deleteSession, assignSave,
+};

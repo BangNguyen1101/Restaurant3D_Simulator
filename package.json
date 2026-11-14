@@ -6,7 +6,8 @@
   "main": "serve.js",
   "scripts": {
     "start": "node --env-file-if-exists=.env serve.js",
-    "import-saves": "node --env-file-if-exists=.env scripts/import-saves.js"
+    "import-saves": "node --env-file-if-exists=.env scripts/import-saves.js",
+    "assign-save": "node --env-file-if-exists=.env scripts/assign-save.js"
   },
   "engines": {
     "node": ">=22.12"

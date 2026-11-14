@@ -5,10 +5,30 @@
 -- Chạy tay:  psql "$DATABASE_URL" -f db/schema.sql
 -- =========================================================
 
--- Mỗi ô lưu (save slot) = 1 người chơi / 1 ván
+-- Tài khoản người chơi
+CREATE TABLE IF NOT EXISTS users (
+    user_id        SERIAL       PRIMARY KEY,
+    username       VARCHAR(30)  NOT NULL,
+    password_hash  TEXT         NOT NULL,              -- scrypt$<salt>$<hash>, không lưu mật khẩu gốc
+    created_at     TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+-- Tên đăng nhập không phân biệt hoa thường
+CREATE UNIQUE INDEX IF NOT EXISTS ux_users_username ON users (lower(username));
+
+-- Phiên đăng nhập: chỉ lưu SHA-256 của token, token gốc nằm trong cookie HttpOnly của trình duyệt
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash  CHAR(64)     PRIMARY KEY,
+    user_id     INT          NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    expires_at  TIMESTAMPTZ  NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_sessions_user ON sessions (user_id);
+
+-- Mỗi ô lưu (save slot) = 1 ván chơi của 1 người chơi
 CREATE TABLE IF NOT EXISTS saves (
     save_id       SERIAL       PRIMARY KEY,
-    slot_name     VARCHAR(50)  NOT NULL UNIQUE,
+    user_id       INT          REFERENCES users(user_id) ON DELETE CASCADE,
+    slot_name     VARCHAR(50)  NOT NULL,
     day           INT          NOT NULL DEFAULT 1,     -- ngày sẽ chơi khi tải lại
     money         INT          NOT NULL DEFAULT 150,
     total_served  INT          NOT NULL DEFAULT 0,
@@ -16,6 +36,12 @@ CREATE TABLE IF NOT EXISTS saves (
     created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
+
+-- Nâng cấp CSDL cũ (trước khi có đăng nhập): thêm chủ sở hữu, tên ô lưu chỉ cần duy nhất trong từng tài khoản.
+-- Ô lưu cũ có user_id = NULL, gán cho tài khoản bằng: npm run assign-save -- "<tên ô lưu>" <tên đăng nhập>
+ALTER TABLE saves ADD COLUMN IF NOT EXISTS user_id INT REFERENCES users(user_id) ON DELETE CASCADE;
+ALTER TABLE saves DROP CONSTRAINT IF EXISTS saves_slot_name_key;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_saves_user_slot ON saves (user_id, slot_name);
 
 -- Tồn kho nguyên liệu
 CREATE TABLE IF NOT EXISTS save_inventory (
@@ -73,5 +99,6 @@ CREATE OR REPLACE VIEW vw_save_overview AS
 SELECT s.save_id, s.slot_name, s.day, s.money, s.total_served, s.total_lost, s.updated_at,
        (SELECT COUNT(*) FROM save_furniture f WHERE f.save_id = s.save_id AND f.item_type = 'table')::int AS tables,
        (SELECT COUNT(*) FROM save_staff st WHERE st.save_id = s.save_id)::int AS staff,
-       (SELECT COALESCE(SUM(r.profit), 0) FROM day_reports r WHERE r.save_id = s.save_id)::int AS total_profit
+       (SELECT COALESCE(SUM(r.profit), 0) FROM day_reports r WHERE r.save_id = s.save_id)::int AS total_profit,
+       s.user_id
 FROM saves s;

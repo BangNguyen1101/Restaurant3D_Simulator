@@ -13,7 +13,7 @@ import { stock, SUPPLY, LOW, buySupply } from './inventory.js';
 import { initDayNight, updateDayNight, nextDay, clockText, OPEN_H, LAST_GUEST_H, CLOSE_H, WAGE } from './daynight.js';
 import { recipeBookHTML } from './recipebook.js';
 import { buildStreet, updateStreet } from './street.js';
-import { checkDb, listSaves, deleteSave, startNew, startLoad, saveGame } from './save.js';
+import { checkDb, listSaves, deleteSave, startNew, startLoad, saveGame, currentUser, login, register, logout } from './save.js';
 import { initAudio, toggleMute } from './audio.js';
 
 // ===== Renderer & scene =====
@@ -162,6 +162,9 @@ async function renderMenu() {
     setTimeout(renderMenu, 5000);
     return;
   }
+  // Có CSDL thì phải đăng nhập để lưu tiến trình riêng cho từng người chơi
+  const user = online ? await currentUser() : null;
+  if (online && !user) return renderAuth();
   let saves = [];
   if (online) { try { saves = await listSaves(); } catch { /* bỏ qua */ } }
   const menu = $('menu');
@@ -169,18 +172,20 @@ async function renderMenu() {
     <div class="db ${online ? 'ok' : 'off'}">${online
       ? '🟢 Đã kết nối cơ sở dữ liệu — tự lưu cuối mỗi ngày, bấm K để lưu bất cứ lúc nào'
       : '🔴 Không kết nối được cơ sở dữ liệu — vẫn chơi được nhưng tiến trình sẽ không được lưu'}</div>
+    ${user ? `<div class="who">👤 Xin chào, <b>${esc(user.username)}</b><button class="ghost" id="btnLogout">Đăng xuất</button></div>` : ''}
     ${saves.length ? '<h3>📂 Tiếp tục</h3>' + saves.map((s) => `
       <div class="srow"><div><b>${esc(s.SlotName)}</b><br>
         <small>Ngày ${s.Day} · $${s.Money} · ${s.Tables} bàn · ${s.Staff} nhân viên · lưu lúc ${new Date(s.UpdatedAt).toLocaleString('vi-VN')}</small></div>
         <button data-load="${esc(s.SlotName)}">▶ Tiếp tục</button><button class="del" data-del="${esc(s.SlotName)}" title="Xoá">🗑</button></div>`).join('') : ''}
     <h3>✨ Chơi mới</h3>
-    <div class="srow"><input id="slotName" maxlength="50" placeholder="Tên ô lưu" value="Người chơi ${saves.length + 1}">
+    <div class="srow"><input id="slotName" maxlength="50" placeholder="Tên ô lưu" value="Ván ${saves.length + 1}">
       <button id="btnNew">Bắt đầu</button></div>
     <div class="err" id="menuErr"></div>`;
   menu.onclick = async (e) => {
     const b = e.target.closest('button');
     if (!b || b.disabled) return;
     if (game.started) { showPausedPanel(); lockPointer(); return; }
+    if (b.id === 'btnLogout') { await logout(); renderMenu(); return; }
     try {
       if (b.id === 'btnNew') {
         const name = $('slotName').value.trim();
@@ -198,6 +203,36 @@ async function renderMenu() {
       showPausedPanel();
       lockPointer();
     } catch (err) { $('menuErr').textContent = '⚠️ ' + err.message; }
+  };
+}
+
+// ===== Màn hình đăng nhập / đăng ký =====
+function renderAuth(mode = 'login') {
+  const reg = mode === 'register';
+  const menu = $('menu');
+  menu.onclick = null;
+  menu.innerHTML = `
+    <div class="db ok">🟢 Đã kết nối cơ sở dữ liệu — đăng nhập để lưu tiến trình của riêng bạn</div>
+    <div class="tabs"><button type="button" class="${reg ? '' : 'on'}" data-tab="login">Đăng nhập</button><button type="button" class="${reg ? 'on' : ''}" data-tab="register">Tạo tài khoản</button></div>
+    <form id="authForm" autocomplete="on">
+      <input id="authUser" name="username" maxlength="30" placeholder="Tên đăng nhập" autocomplete="username" required>
+      <input id="authPass" name="password" type="password" maxlength="100" placeholder="Mật khẩu${reg ? ' (ít nhất 6 ký tự)' : ''}" autocomplete="${reg ? 'new-password' : 'current-password'}" required>
+      ${reg ? '<input id="authPass2" type="password" maxlength="100" placeholder="Nhập lại mật khẩu" autocomplete="new-password" required>' : ''}
+      <button type="submit">${reg ? 'Tạo tài khoản và vào game' : 'Đăng nhập'}</button>
+    </form>
+    <div class="err" id="menuErr"></div>`;
+  menu.querySelectorAll('[data-tab]').forEach((t) => { t.onclick = () => renderAuth(t.dataset.tab); });
+  $('authUser').focus();
+  $('authForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const u = $('authUser').value.trim(), p = $('authPass').value;
+    if (reg && p !== $('authPass2').value) { $('menuErr').textContent = 'Hai mật khẩu không khớp.'; return; }
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true;
+    try {
+      await (reg ? register(u, p) : login(u, p));
+      renderMenu();
+    } catch (err) { $('menuErr').textContent = '⚠️ ' + err.message; btn.disabled = false; }
   };
 }
 renderMenu();

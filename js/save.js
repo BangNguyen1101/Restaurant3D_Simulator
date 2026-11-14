@@ -7,11 +7,14 @@ import { Bot } from './staff.js';
 import { stock } from './inventory.js';
 import { OPEN_H } from './daynight.js';
 
-export const saveState = { slot: null, dbOnline: false };
+export const saveState = { slot: null, dbOnline: false, user: null };
 
-// Gọi API; lỗi mạng tạm thời (Wi-Fi chập chờn, VPN bật/tắt, máy chủ đang thức dậy) thì tự thử lại vài lần
+// Gọi API; lỗi mạng tạm thời (Wi-Fi chập chờn, VPN bật/tắt, máy chủ đang thức dậy) thì tự thử lại vài lần.
+// Cookie phiên đăng nhập (HttpOnly) được trình duyệt tự gửi kèm; header X-Requested-With dùng để chống CSRF.
 async function api(method, url, body) {
-  const opts = { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined };
+  const headers = { 'X-Requested-With': 'NhaHang3D' };
+  if (body) headers['Content-Type'] = 'application/json';
+  const opts = { method, headers, credentials: 'same-origin', body: body ? JSON.stringify(body) : undefined };
   let r;
   for (let attempt = 1; ; attempt++) {
     try { r = await fetch(url, opts); break; } catch (e) {
@@ -29,6 +32,24 @@ export async function checkDb() {
   return saveState.dbOnline;
 }
 export const listSaves = () => api('GET', '/api/saves');
+
+// ===== Tài khoản =====
+export async function currentUser() {
+  try { saveState.user = (await api('GET', '/api/auth/me')).user; } catch { saveState.user = null; }
+  return saveState.user;
+}
+export async function login(username, password) {
+  saveState.user = (await api('POST', '/api/auth/login', { username, password })).user;
+  return saveState.user;
+}
+export async function register(username, password) {
+  saveState.user = (await api('POST', '/api/auth/register', { username, password })).user;
+  return saveState.user;
+}
+export async function logout() {
+  await api('POST', '/api/auth/logout').catch(() => {});
+  saveState.user = null;
+}
 export const deleteSave = (slot) => api('DELETE', `/api/saves/${encodeURIComponent(slot)}`);
 
 // Chụp trạng thái hiện tại thành dữ liệu để lưu
@@ -57,7 +78,7 @@ export async function saveGame(day = game.day, report = null, silent = false) {
     if (!silent) game.toast(`💾 Đã lưu "${saveState.slot}" (tải lại sẽ bắt đầu sáng ngày ${day})`);
     return true;
   } catch (e) {
-    game.toast(`⚠️ Lưu thất bại: ${e.message}`);
+    game.toast(`⚠️ Lưu thất bại: ${e.message}` + (/đăng nhập/.test(e.message) ? ' — mở game ở tab khác, đăng nhập lại rồi bấm K' : ''));
     return false;
   }
 }

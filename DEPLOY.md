@@ -49,6 +49,8 @@ Không cần tạo bảng bằng tay: máy chủ tự chạy `db/schema.sql` khi
 
 ## Bước 2 — (Tuỳ chọn) Chuyển ô lưu cũ từ SQL Server sang Neon
 
+> Làm bước này **sau khi** đã deploy xong và tạo tài khoản trên game (ô lưu sẽ thuộc về tài khoản đó).
+
 Ô lưu "Vua Đầu Bết" đã được xuất ra file `saves-export.json` trong thư mục dự án.
 
 1. Trong thư mục `NhaHang3D`, tạo file **`.env`** (copy từ `.env.example`) với nội dung:
@@ -58,7 +60,7 @@ Không cần tạo bảng bằng tay: máy chủ tự chạy `db/schema.sql` khi
 2. Chạy:
    ```powershell
    npm install
-   npm run import-saves -- saves-export.json
+   npm run import-saves -- saves-export.json <tên đăng nhập>
    ```
    Kết quả: `Đã nhập "Vua Đầu Bết": ngày 7, ... (bỏ 30 đồ trùng) ...`
 
@@ -113,6 +115,11 @@ Chỉ cần `git push origin main` — Render và Vercel **tự build lại** tr
 ## Lưu ý
 
 - Game điều khiển bằng **chuột + bàn phím** — chơi trên máy tính (Chrome/Edge).
-- ⚠️ Chưa có đăng nhập: ai có link cũng thấy và xoá được ô lưu của người khác. Chỉ gửi link cho người tin tưởng.
+- Mỗi người chơi tự tạo tài khoản trên menu game và chỉ thấy ô lưu của mình.
+- **Ô lưu tạo trước khi có đăng nhập** (ví dụ "Vua Đầu Bết") sẽ tạm thời không ai thấy. Sau khi deploy bản có đăng nhập: vào game tạo tài khoản, rồi trên máy chạy
+  ```powershell
+  npm run assign-save -- "Vua Đầu Bết" <tên đăng nhập của bạn>
+  ```
+  (file `.env` phải có DATABASE_URL của Neon). Tải lại trang là thấy ô lưu.
 - Đổi mật khẩu Neon (Neon → Roles → Reset password) nếu lỡ để lộ chuỗi kết nối, rồi cập nhật lại DATABASE_URL trên Render và trong `.env`.
 - Chạy trên máy cá nhân: `npm install` → tạo `.env` (bước 2) → `npm start` → http://localhost:5173.
